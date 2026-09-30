@@ -1,23 +1,103 @@
-# n8n_projet
+# 🏇 Récap Top 5 courses du week-end (démo)
 
-Flow n8n **PMU - Récap Top 5 courses du week-end** (`workflows/recap_weekend_complet.json`) : chaque lundi 9h30, récupère les courses françaises du week-end via l'API PMU, sélectionne le top 5 par allocation et envoie un mail adapté au segment client (actif / inactif).
+Flow n8n qui envoie chaque lundi aux joueurs un récap personnalisé des **5 plus grosses courses françaises du week-end**, avec leurs arrivées.
 
-## Skills Claude Code (`.claude/skills/`)
+## Objectif
 
-Le cycle de travail sur le flow :
+| But | Cible | Message |
+|---|---|---|
+| **Fidéliser** | Actifs | Rester connecté aux temps forts hippiques |
+| **Réactiver** | Inactifs (3 à 6 mois sans jouer) | Montrer ce qu'ils ont raté |
 
-1. **`interview-spec`** : explorer l'existant, interviewer, challenger → spec `specs/*.md` (objectif + affirmations vérifiables).
-2. **`doubt-driven-dev`** : implémenter en doutant de chaque résultat ; rien n'est « fini » sans preuve.
-3. **`hostile-review`** : attaquer le flow pour le casser, prouver chaque problème, rapport trié par gravité.
+L'impact se mesure sur l'évolution des enjeux avant et après l'envoi, comparée à celle d'un **groupe témoin**.
 
-Dans Claude Code : `/interview-spec`, `/doubt-driven-dev`, `/hostile-review`.
+## Fonctionnement
 
-## Tester un node Code hors n8n
+```
+Lundi 9h30 ─┬─► 50 clients fictifs ─┬─► Excel ─► Google Drive (archive)
+            │                       └─► Filtre actifs + inactifs ──┐
+            │                                                      ├─► Clients × Top 5 ─► Mail HTML ─► Gmail
+            └─► Dates du week-end ─► API PMU ─► Courses FR ─► Top 5 ┘
+                                        └──── en cas d'échec ────► Alerte échec (mail interne)
+```
+
+| | |
+|---|---|
+| **Hébergement** | n8n Cloud |
+| **Déclenchement** | Chaque lundi à 9h30 (Europe/Paris) sur le week-end précédent, ou via « Test manuel » |
+| **Courses** | API turfinfo PMU, courses françaises (`FRA`) uniquement, top 5 par allocation |
+| **Fallback** | Seuil 30 000 € → 15 000 € → sans seuil, jusqu'à avoir 5 courses |
+| **Clients** | 50 comptes fictifs régénérés à chaque exécution, Excel archivé sur Google Drive |
+| **Envoi** | Gmail, 1 mail par segment en démo (`DEMO_UN_PAR_SEGMENT = true`) vers une adresse de test (`EMAIL_TEST`) |
+
+## Segmentation
+
+Basée sur `dt_hr_reference_hippique` (date de la dernière activité hippique).
+
+| Segment | Jours sans activité | Mail |
+|---|---|---|
+| Actif | 0 – 60 | Fidélisation |
+| Hors cible | 61 – 90 | Aucun |
+| Inactif | 91 – 180 | Réactivation |
+| Exclu | > 180 | Aucun |
+
+## Personnalisation du mail
+
+- **Selon le segment** : objet, bandeau, couleur, intro, bouton et P.S.
+- **Commun** : le tableau des 5 courses (jour, heure, course, hippodrome, allocation, gagnant, arrivée).
+
+## Sécurité
+
+- **API PMU** : 3 tentatives espacées de 5 s, puis un mail d'alerte interne.
+- **Aucune course française** : pas d'envoi aux clients et un mail d'alerte.
+- **Pied de mail** : mention jeu responsable ANJ (09 74 75 13 13) et lien de désinscription.
+
+## KPIs
+
+1. Taux d'ouverture et taux de clic.
+2. Enjeux avant / après l'envoi (Dataiku), comparés au groupe témoin.
+
+## Passage en prod
+
+| Élément | Démo | Prod |
+|---|---|---|
+| Clients | 50 comptes fictifs | Scénario **Dataiku** : actifs 0-60 j, inactifs 91-180 j, exclusion des non opt-in et des auto-exclus, groupe témoin |
+| Liaison | — | n8n lance le scénario via l'API Dataiku, puis lit le dataset produit |
+| Hébergement | n8n Cloud | n8n **auto-hébergé PMU** |
+| Accès | — | Clé API Dataiku (dans les credentials n8n, jamais dans le code) |
+| Envoi | 1 mail par segment vers l'adresse de test | Tous les comptes ciblés, liens réels à la place des `href="#"` |
+
+## Limites connues (démo)
+
+- Si l'API échoue pour **un seul** des deux jours, le mail part quand même avec l'autre jour (et l'alerte est envoyée).
+- Un « Test manuel » lancé un **dimanche** prend le week-end précédent, pas celui en cours. Pour forcer des dates, remplir `FORCE` dans « Dates du week-end ».
+
+## Contenu du repo
+
+```
+workflows/recap_weekend_complet.json   Le flow n8n (à importer dans n8n)
+.claude/skills/                        Skills Claude Code pour faire évoluer le flow
+specs/                                 Specs produites par /interview-spec
+tools/run-code-node.mjs                Exécute un node Code hors n8n
+tools/fixtures/                        Données de test
+```
+
+### Importer le flow
+
+Dans n8n : **Workflows → Import from File** → `workflows/recap_weekend_complet.json`. Ensuite, connecter les credentials Gmail et Google Drive et remplacer `ton.email@exemple.com` (node « Génération clients fictifs » et node « Alerte échec »).
+
+### Skills Claude Code
+
+À utiliser dans cet ordre pour toute évolution :
+
+1. **`/interview-spec`** : explorer l'existant, interviewer, challenger, puis écrire la spec `specs/*.md` (objectif + affirmations vérifiables).
+2. **`/doubt-driven-dev`** : implémenter en doutant de chaque résultat ; rien n'est « fini » sans preuve.
+3. **`/hostile-review`** : attaquer le flow pour le casser, prouver chaque problème, puis rendre un rapport trié par gravité.
+
+### Tester un node Code hors n8n
 
 ```bash
 npm install
 node tools/run-code-node.mjs workflows/recap_weekend_complet.json "Dates du week-end" tools/fixtures/vide.json --now 2026-09-28T09:30
 node tools/run-code-node.mjs workflows/recap_weekend_complet.json "Aplatir les courses" tools/fixtures/programme_pmu.json --ref "Dates du week-end=tools/fixtures/dates.json"
 ```
-
-Les fixtures sont dans `tools/fixtures/`.
