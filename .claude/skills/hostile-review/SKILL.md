@@ -1,51 +1,36 @@
 ---
 name: hostile-review
-description: Revue hostile du flow n8n recap_weekend_complet - on attaque le projet pour le casser, on teste chaque problème et on ne garde que ce qui est prouvé. À utiliser avant de livrer/pousser une modif, ou quand on demande "review", "casse-le", "trouve les failles".
+description: Revue hostile d'un projet ou d'une modification - on attaque le code pour le casser, on teste chaque problème et on ne garde que ce qui est prouvé. À utiliser avant de livrer ou pousser, ou quand on demande "review", "casse-le", "trouve les failles".
 ---
 
 # Hostile Review
 
-Posture : **tu n'es pas l'auteur, tu es l'attaquant.** Le flow est coupable jusqu'à preuve du contraire. Objectif : trouver ce qui casse, envoie un mauvais mail, ou échoue en silence.
+Posture : **tu n'es pas l'auteur, tu es l'attaquant.** Le code est coupable jusqu'à preuve du contraire. Objectif : trouver ce qui casse, produit un résultat faux, ou échoue en silence.
 
 Idéalement, lancer la revue dans un **sous-agent** (`Agent`, type `general-purpose`) qui n'a pas écrit le code, avec ce skill comme consigne.
 
-## 1. Surface d'attaque
+## 1. Cartographier la surface d'attaque
 
-Lire `workflows/recap_weekend_complet.json` en entier + la spec dans `specs/` si elle existe. Cartographier : triggers → clients fictifs → filtre segments → dates → API PMU → aplatir → FRA → top 5 → merge → mail → Gmail, et les branches d'erreur vers `Alerte échec`.
+Lire le code visé en entier, plus la spec dans `specs/` si elle existe. Identifier : les entrées (utilisateur, API, fichiers, dates), les sorties (données, mails, fichiers, appels externes), les branches d'erreur, et ce qui est en dur ou provisoire.
 
 ## 2. Attaquer — angles obligatoires
 
-**Dates / temps**
-- Lancer le « Test manuel » un dimanche, un samedi, un mardi : quel week-end est pris ?
-- Passage heure d'été/hiver (dernier dimanche de mars/octobre), fin d'année, `FORCE` rempli.
-
-**API PMU**
-- Une seule des deux dates en échec : le mail part-il avec un seul jour sans le dire ? L'alerte part-elle ?
-- Réponse 200 mais `programme` vide, `reunions` sans `courses`, `montantPrix` absent, `ordreArrivee` absent (course pas encore courue).
-- Structure de l'API différente de celle supposée (vérifier le vrai JSON si le réseau le permet).
-
-**Logique métier**
-- Moins de 5 courses FRA, aucune, égalités d'allocation, doublons.
-- Bornes des segments : 60, 61, 90, 91 jours. `hors_cible` bien exclu ?
-- Le texte « actif » part-il bien aux actifs et « tu nous as manqué » aux inactifs ?
-
-**Mail**
-- Caractères spéciaux / HTML dans `libelle` ou `hippodrome` (pas d'échappement).
-- Mention jeu responsable + désinscription toujours présentes.
-- `EMAIL_TEST` / `DEMO_UN_PAR_SEGMENT` : risque d'envoyer 50 mails ou à une vraie adresse.
-
-**Erreurs**
-- `Alerte échec` : `$prevNode.name` affiche-t-il le bon node ? `executeOnce` masque-t-il une 2ᵉ erreur ?
-- Un échec du merge/Gmail/Drive est-il alerté ou silencieux ?
+- **Entrées** : vide, nulle, en double, énorme, mal formée, caractères spéciaux / HTML / injection.
+- **Temps** : autre jour que prévu, changement d'heure, fin de mois ou d'année, fuseau horaire.
+- **Dépendances externes** : service en panne, lent, réponse 200 mais vide, format différent de celui supposé, succès partiel.
+- **Logique métier** : bornes exactes (≤ vs <), égalités, arrondis, cas où la règle ne s'applique pas.
+- **Erreurs** : chaque erreur est-elle signalée, ou avalée en silence ? Un échec partiel laisse-t-il un état incohérent ?
+- **Sécurité** : secrets dans le code, données sensibles loggées ou envoyées, permissions trop larges.
+- **Écart avec la spec ou la doc** : ce que le README promet, le code le fait-il vraiment ?
 
 ## 3. Prouver chaque attaque
 
-Pas de finding sans preuve. Pour chaque attaque :
-1. Construire une fixture dans `tools/fixtures/`.
-2. Exécuter : `node tools/run-code-node.mjs workflows/recap_weekend_complet.json "<Node>" <fixture> [--ref "Node=f.json"] [--now ISO]`
-3. Noter le résultat réel.
+Pas de problème retenu sans preuve. Pour chaque attaque :
+1. Construire l'entrée qui casse : fixture, test, ou script jetable.
+2. L'exécuter réellement.
+3. Noter le résultat obtenu face au résultat attendu.
 
-Si ça ne se teste pas hors n8n (Gmail, Drive, Merge, `$prevNode`), le classer **« à tester dans n8n »** avec le scénario exact à reproduire.
+Si ça ne se teste pas ici (service externe, prod), classer le problème **« à tester manuellement »** avec le scénario exact.
 
 ## 4. Rapport
 
@@ -56,7 +41,7 @@ Trier par gravité, sans enrober :
 | 1 | 🔴 bloquant / 🟠 important / 🟡 mineur | … | entrée → résultat faux | commande + sortie | … |
 
 Puis :
-- **Réfuté** : attaques tentées qui n'ont rien cassé (preuve à l'appui) — ça compte aussi.
-- **À tester dans n8n** : scénarios non reproductibles ici.
+- **Réfuté** : les attaques tentées qui n'ont rien cassé, preuve à l'appui. Elles comptent aussi.
+- **À tester manuellement** : les scénarios non reproductibles ici.
 
-Ne pas corriger soi-même pendant la revue : proposer, l'utilisateur tranche. Les corrections passent ensuite par `doubt-driven-dev`.
+Ne pas corriger soi-même pendant la revue : proposer, et l'utilisateur tranche. Les corrections passent ensuite par `doubt-driven-dev`.

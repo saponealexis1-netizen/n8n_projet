@@ -76,7 +76,7 @@ Basée sur `dt_hr_reference_hippique` (date de la dernière activité hippique).
 
 ```
 workflows/recap_weekend_complet.json   Le flow n8n (à importer dans n8n)
-.claude/skills/                        Skills Claude Code pour faire évoluer le flow
+.claude/skills/                        Skills Claude Code génériques (spec, dev, review)
 specs/                                 Specs produites par /interview-spec
 tools/run-code-node.mjs                Exécute un node Code hors n8n
 tools/fixtures/                        Données de test
@@ -88,11 +88,11 @@ Dans n8n : **Workflows → Import from File** → `workflows/recap_weekend_compl
 
 ### Skills Claude Code
 
-À utiliser dans cet ordre pour toute évolution :
+Skills **génériques** (réutilisables sur n'importe quel projet : il suffit de copier `.claude/skills/`). À utiliser dans cet ordre pour toute évolution :
 
 1. **`/interview-spec`** : explorer l'existant, interviewer, challenger, puis écrire la spec `specs/*.md` (objectif + affirmations vérifiables).
 2. **`/doubt-driven-dev`** : implémenter en doutant de chaque résultat ; rien n'est « fini » sans preuve.
-3. **`/hostile-review`** : attaquer le flow pour le casser, prouver chaque problème, puis rendre un rapport trié par gravité.
+3. **`/hostile-review`** : attaquer le code pour le casser, prouver chaque problème, puis rendre un rapport trié par gravité.
 
 ### Tester un node Code hors n8n
 
