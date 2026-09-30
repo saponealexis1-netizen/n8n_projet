@@ -1,0 +1,457 @@
+{
+  "name": "PMU - Récap Top 5 courses du week-end (démo)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "name": "Lundi 9h30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        160
+      ],
+      "id": "f4916973-9170-4de0-be67-776ba850e0d3"
+    },
+    {
+      "parameters": {},
+      "name": "Test manuel",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        360
+      ],
+      "id": "70843e55-d599-401b-9d39-3e0e7562d41e"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Génère une base de comptes fictifs, différente à chaque exécution\nconst NB_COMPTES = 50;\nconst EMAIL_TEST = 'ton.email@exemple.com'; // tous les mails partent ici\nconst PRENOMS = ['Lucas','Emma','Hugo','Léa','Louis','Chloé','Nathan','Inès','Yanis','Sarah',\n                 'Karim','Julie','Thomas','Camille','Mehdi','Manon','Enzo','Jade','Adam','Lina'];\n\nconst now = DateTime.now().setZone('Europe/Paris');\nconst rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;\n\nconst comptes = [];\nfor (let i = 0; i < NB_COMPTES; i++) {\n  // Dernière activité hippique : entre 0 et 180 jours dans le passé\n  // Les 2 premiers comptes garantissent au moins 1 actif et 1 inactif\n  const nbJours = i === 0 ? rand(0, 59) : i === 1 ? rand(92, 180) : rand(0, 180);\n  const derniere = now.minus({ days: nbJours, hours: rand(0, 23), minutes: rand(0, 59) });\n  const jours = Math.floor(now.diff(derniere, 'days').days);\n\n  let segment = 'hors_cible';          // 61 à 90 jours\n  if (jours <= 60) segment = 'actif';   // 0 à 60 jours\n  else if (jours > 90) segment = 'inactif';\n\n  comptes.push({ json: {\n    id_compte: `CPT${String(rand(100000, 999999))}`,\n    prenom: PRENOMS[rand(0, PRENOMS.length - 1)],\n    email: EMAIL_TEST,\n    dt_hr_reference_hippique: derniere.toFormat('yyyy-MM-dd HH:mm:ss'),\n    jours_depuis_activite: jours,\n    segment\n  }});\n}\nreturn comptes;"
+      },
+      "name": "Génération clients fictifs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        60
+      ],
+      "id": "e984ee40-c8f9-48ce-8ff9-e61ac59c05b3"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "fileName": "=clients_fictifs_{{ $now.setZone('Europe/Paris').toFormat('yyyyMMdd_HHmm') }}.xlsx",
+          "sheetName": "clients"
+        }
+      },
+      "name": "Convertir en Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        520,
+        -120
+      ],
+      "id": "6e2b3015-a886-44e8-bc5c-95ae39670fdd"
+    },
+    {
+      "parameters": {
+        "name": "={{ $binary.data.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      },
+      "name": "Archiver sur Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        780,
+        -120
+      ],
+      "id": "42ebfced-f1be-41d4-8b95-0a4d01e12274"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "06011b66-45c1-4318-b1b5-5c52a6a7cc79",
+              "leftValue": "={{ $json.segment }}",
+              "rightValue": "hors_cible",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Garder actifs + inactifs",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        60
+      ],
+      "id": "5b3fcd6e-182a-4b1b-80fd-b3f3a4a3b3b7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calcule le samedi et le dimanche du week-end précédent (heure de Paris)\n// Pour forcer d'autres dates : FORCE = ['26092026', '27092026']\nconst FORCE = null;\n\nconst today = DateTime.now().setZone('Europe/Paris').startOf('day');\nconst sunday = today.minus({ days: today.weekday }); // weekday : lundi=1 ... dimanche=7\nconst saturday = sunday.minus({ days: 1 });\n\nconst days = FORCE\n  ? FORCE.map(d => DateTime.fromFormat(d, 'ddMMyyyy', { zone: 'Europe/Paris' }))\n  : [saturday, sunday];\n\nreturn days.map(d => {\n  const label = d.setLocale('fr').toFormat('cccc d LLLL');\n  return { json: {\n    date: d.toFormat('ddMMyyyy'),\n    date_iso: d.toISODate(),\n    jour: label.charAt(0).toUpperCase() + label.slice(1)\n  }};\n});"
+      },
+      "name": "Dates du week-end",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        360
+      ],
+      "id": "19c32d96-a6b0-4df2-9fea-0cb4e5090c88"
+    },
+    {
+      "parameters": {
+        "url": "=https://online.turfinfo.api.pmu.fr/rest/client/1/programme/{{ $json.date }}",
+        "options": {}
+      },
+      "name": "Programme PMU",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        360
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "id": "f83f2388-765a-4fa1-872f-0fb44b13666f"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Chaque réponse HTTP est rattachée à sa date d'origine\nconst courses = [];\n\n$input.all().forEach((item, i) => {\n  const { date, jour } = $('Dates du week-end').itemMatching(i).json;\n  const prog = item.json.programme ?? {};\n\n  for (const r of prog.reunions ?? []) {\n    for (const c of r.courses ?? []) {\n      courses.push({ json: {\n        date,\n        jour,\n        pays: r.pays?.code ?? '',\n        hippodrome: r.hippodrome?.libelleCourt ?? '',\n        reunion: `R${r.numOfficiel}`,\n        course: `C${c.numOrdre}`,\n        libelle: c.libelle,\n        heure: c.heureDepart\n          ? new Date(c.heureDepart).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })\n          : '',\n        discipline: c.discipline,\n        allocation: c.montantPrix ?? 0,\n        partants: c.nombreDeclaresPartants ?? 0,\n        gagnant: c.ordreArrivee?.[0]?.length ? `n°${c.ordreArrivee[0].join(' / n°')}` : 'arrivée non dispo',\n        arrivee: (c.ordreArrivee ?? []).slice(0, 5).map(x => x.join('=')).join(' - ')\n      }});\n    }\n  }\n});\n\nreturn courses;"
+      },
+      "name": "Aplatir les courses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        360
+      ],
+      "id": "4ead0254-e747-4568-9188-996c600f0d8c"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "45588408-93a1-487d-8a47-17e0e5b739a7",
+              "leftValue": "={{ $json.pays }}",
+              "rightValue": "FRA",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Courses françaises",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        1040,
+        360
+      ],
+      "alwaysOutputData": true,
+      "id": "bdbffc7d-5f76-4a80-9bef-06fdb8ba0fde"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Top 5 avec fallback : 30 000 € -> 15 000 € -> sans seuil\nconst all = $input.all()\n  .map(i => i.json)\n  .filter(c => c.course) // ignore l'item vide si le Filter n'a rien gardé\n  .sort((a, b) => b.allocation - a.allocation);\n\nif (all.length === 0) {\n  throw new Error(\"Aucune course française récupérée : pas d'envoi.\");\n}\n\nlet seuil = 30000;\nlet selection = all.filter(c => c.allocation >= seuil);\nif (selection.length < 5) { seuil = 15000; selection = all.filter(c => c.allocation >= seuil); }\nif (selection.length < 5) { seuil = 0; selection = all; }\n\nreturn [{ json: {\n  courses: selection.slice(0, 5),\n  seuil_applique: seuil,\n  nb_courses_fr: all.length\n}}];"
+      },
+      "name": "Top 5 + fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        360
+      ],
+      "onError": "continueErrorOutput",
+      "id": "feccf72c-48bf-473e-93c2-e59ed76abc21"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "name": "Clients x Top 5",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        1560,
+        200
+      ],
+      "id": "27d21871-e263-4bb5-957b-f57e16aeb519"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construit un mail par compte ciblé (objet + intro selon le segment)\n// Démo : un seul mail par segment pour ne pas inonder la boîte de test\nconst DEMO_UN_PAR_SEGMENT = true;\n\nlet comptes = $input.all().map(i => i.json);\nif (DEMO_UN_PAR_SEGMENT) {\n  const vus = new Set();\n  comptes = comptes.filter(c => !vus.has(c.segment) && vus.add(c.segment));\n}\n\nconst td = 'padding:8px;border-bottom:1px solid #e5e7eb';\n\nreturn comptes.map(c => {\n  const lignes = c.courses.map(k => `\n    <tr>\n      <td style=\"${td}\">${k.jour}<br><small>${k.heure}</small></td>\n      <td style=\"${td}\"><b>${k.libelle}</b><br><small>${k.hippodrome} · ${k.reunion}${k.course} · ${k.discipline}</small></td>\n      <td style=\"${td};text-align:right\">${Number(k.allocation).toLocaleString('fr-FR')} €</td>\n      <td style=\"${td};text-align:center\"><b>${k.gagnant}</b><br><small>${k.arrivee}</small></td>\n    </tr>`).join('');\n\n  const actif = c.segment === 'actif';\n  const P = actif ? {\n    sujet: `🏇 ${c.prenom}, les 5 courses phares du week-end`,\n    bandeau: 'Les 5 courses phares du week-end',\n    couleur: '#00543b',\n    intro: `Salut ${c.prenom}, tu as suivi les courses dernièrement : voici le récap des plus grosses épreuves du week-end et leurs arrivées.`,\n    cta: 'Voir le programme de la semaine',\n    ps: 'Un nouveau week-end de belles courses arrive, on te tient au courant lundi prochain.'\n  } : {\n    sujet: `${c.prenom}, voici ce que tu as raté ce week-end 🏇`,\n    bandeau: 'Ce que tu as raté ce week-end',\n    couleur: '#b45309',\n    intro: `Salut ${c.prenom}, ça fait plus de 3 mois qu'on ne t'a pas vu sur les courses ! Voici les 5 plus belles épreuves du week-end, de quoi te donner envie de revenir.`,\n    cta: 'Revenir sur les courses',\n    ps: \"Envie de t'y remettre ? Le programme de la semaine est déjà en ligne.\"\n  };\n\n  const html = `\n<div style=\"font-family:Arial,sans-serif;max-width:680px;margin:auto\">\n  <div style=\"background:${P.couleur};color:#fff;padding:20px;border-radius:10px 10px 0 0\">\n    <h2 style=\"margin:0\">🏇 ${P.bandeau}</h2>\n  </div>\n  <p>${P.intro}</p>\n  <table style=\"width:100%;border-collapse:collapse;font-size:14px\">\n    <tr style=\"background:#f3f4f6\">\n      <th style=\"padding:8px;text-align:left\">Jour</th>\n      <th style=\"padding:8px;text-align:left\">Course</th>\n      <th style=\"padding:8px;text-align:right\">Allocation</th>\n      <th style=\"padding:8px\">Gagnant</th>\n    </tr>${lignes}\n  </table>\n  <p style=\"text-align:center;margin:28px 0\">\n    <a href=\"#\" style=\"background:${P.couleur};color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold\">${P.cta}</a>\n  </p>\n  <p style=\"font-size:14px\">${P.ps}</p>\n  <p style=\"color:#6b7280;font-size:12px;margin-top:24px\">\n    Jouer comporte des risques : endettement, isolement, dépendance. Pour être aidé, appelez le 09 74 75 13 13 (appel non surtaxé).<br>\n    <a href=\"#\" style=\"color:#6b7280\">Se désinscrire</a> · Compte ${c.id_compte} · segment ${c.segment} (démo fictive)\n  </p>\n</div>`;\n  const sujet = P.sujet;\n\n  return { json: { id_compte: c.id_compte, segment: c.segment, email: c.email, sujet, html } };\n});"
+      },
+      "name": "Construire le mail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        200
+      ],
+      "id": "3332035b-2e9a-402d-8c5e-f20583aad574"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.sujet }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Envoyer (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2080,
+        200
+      ],
+      "id": "8dce4d0f-7d84-482e-b329-2ef7d7898a96"
+    },
+    {
+      "parameters": {
+        "sendTo": "ton.email@exemple.com",
+        "subject": "=⚠️ Flow PMU récap week-end : échec du {{ $now.setZone('Europe/Paris').toFormat('dd/MM/yyyy HH:mm') }}",
+        "emailType": "html",
+        "message": "=<div style=\"font-family:Arial,sans-serif\"><h3 style=\"color:#b91c1c\">⚠️ Le récap du week-end n'a pas pu être généré correctement</h3><p><b>Étape :</b> {{ $prevNode.name }}</p><p><b>Erreur :</b> {{ $json.error?.message ?? JSON.stringify($json.error ?? $json) }}</p><p>Si l'erreur vient de « Programme PMU », l'API a échoué après 3 tentatives. Si elle vient de « Top 5 + fallback », aucune course française n'a été récupérée. Aucun mail client n'est parti pour la partie concernée.</p></div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Alerte échec",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "executeOnce": true,
+      "position": [
+        1560,
+        600
+      ],
+      "id": "dcd7f702-9a47-40ee-97c4-39da13e557b7"
+    }
+  ],
+  "connections": {
+    "Lundi 9h30": {
+      "main": [
+        [
+          {
+            "node": "Génération clients fictifs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dates du week-end",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test manuel": {
+      "main": [
+        [
+          {
+            "node": "Génération clients fictifs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dates du week-end",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Génération clients fictifs": {
+      "main": [
+        [
+          {
+            "node": "Convertir en Excel",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Garder actifs + inactifs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convertir en Excel": {
+      "main": [
+        [
+          {
+            "node": "Archiver sur Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Garder actifs + inactifs": {
+      "main": [
+        [
+          {
+            "node": "Clients x Top 5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dates du week-end": {
+      "main": [
+        [
+          {
+            "node": "Programme PMU",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Programme PMU": {
+      "main": [
+        [
+          {
+            "node": "Aplatir les courses",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alerte échec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplatir les courses": {
+      "main": [
+        [
+          {
+            "node": "Courses françaises",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Courses françaises": {
+      "main": [
+        [
+          {
+            "node": "Top 5 + fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Top 5 + fallback": {
+      "main": [
+        [
+          {
+            "node": "Clients x Top 5",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Alerte échec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clients x Top 5": {
+      "main": [
+        [
+          {
+            "node": "Construire le mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construire le mail": {
+      "main": [
+        [
+          {
+            "node": "Envoyer (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris"
+  },
+  "pinData": {}
+}

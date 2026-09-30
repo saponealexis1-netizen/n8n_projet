@@ -1,0 +1,11 @@
+{
+  "name": "n8n_projet",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "node:run": "node tools/run-code-node.mjs"
+  },
+  "devDependencies": {
+    "luxon": "^3.5.0"
+  }
+}

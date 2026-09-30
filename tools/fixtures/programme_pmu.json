@@ -1,0 +1,255 @@
+[
+ {
+  "programme": {
+   "reunions": [
+    {
+     "numOfficiel": 1,
+     "pays": {
+      "code": "FRA"
+     },
+     "hippodrome": {
+      "libelleCourt": "LONGCHAMP"
+     },
+     "courses": [
+      {
+       "numOrdre": 1,
+       "libelle": "PRIX TEST 1",
+       "heureDepart": 1790001800000,
+       "discipline": "PLAT",
+       "montantPrix": 80000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      },
+      {
+       "numOrdre": 2,
+       "libelle": "PRIX TEST 2",
+       "heureDepart": 1790003600000,
+       "discipline": "PLAT",
+       "montantPrix": 40000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      },
+      {
+       "numOrdre": 3,
+       "libelle": "PRIX TEST 3",
+       "heureDepart": 1790005400000,
+       "discipline": "PLAT",
+       "montantPrix": 22000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      },
+      {
+       "numOrdre": 4,
+       "libelle": "PRIX TEST 4",
+       "heureDepart": 1790007200000,
+       "discipline": "PLAT",
+       "montantPrix": 18000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "numOfficiel": 2,
+     "pays": {
+      "code": "GB"
+     },
+     "hippodrome": {
+      "libelleCourt": "ASCOT"
+     },
+     "courses": [
+      {
+       "numOrdre": 1,
+       "libelle": "PRIX TEST 1",
+       "heureDepart": 1790001800000,
+       "discipline": "PLAT",
+       "montantPrix": 500000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "programme": {
+   "reunions": [
+    {
+     "numOfficiel": 1,
+     "pays": {
+      "code": "FRA"
+     },
+     "hippodrome": {
+      "libelleCourt": "LONGCHAMP"
+     },
+     "courses": [
+      {
+       "numOrdre": 1,
+       "libelle": "PRIX TEST 1",
+       "heureDepart": 1790001800000,
+       "discipline": "PLAT",
+       "montantPrix": 35000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      },
+      {
+       "numOrdre": 2,
+       "libelle": "PRIX TEST 2",
+       "heureDepart": 1790003600000,
+       "discipline": "PLAT",
+       "montantPrix": 16000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      },
+      {
+       "numOrdre": 3,
+       "libelle": "PRIX TEST 3",
+       "heureDepart": 1790005400000,
+       "discipline": "PLAT",
+       "montantPrix": 9000,
+       "nombreDeclaresPartants": 12,
+       "ordreArrivee": [
+        [
+         5
+        ],
+        [
+         3
+        ],
+        [
+         8,
+         9
+        ],
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ }
+]
