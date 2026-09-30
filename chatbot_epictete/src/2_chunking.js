@@ -18,7 +18,10 @@ for (const ligne of texte.split('\n')) {
 }
 
 if (chapitres.length !== NB_CHAPITRES) {
-  throw new Error(`${chapitres.length} chapitres trouvés au lieu de ${NB_CHAPITRES} : mauvais livre ou autre traduction (rien n'a été indexé).`);
+  const suite = chapitres.length && chapitres.length < NB_CHAPITRES
+    ? ` : chapitre ${chapitres.length + 1} introuvable après le chapitre ${chapitres.length}`
+    : '';
+  throw new Error(`${chapitres.length} chapitres trouvés au lieu de ${NB_CHAPITRES}${suite}. Mauvais livre, autre traduction ou PDF mal extrait (rien n'a été indexé).`);
 }
 const vide = chapitres.find(c => !c.texte);
 if (vide) throw new Error(`Chapitre ${vide.chapitre} vide : PDF mal extrait (rien n'a été indexé).`);

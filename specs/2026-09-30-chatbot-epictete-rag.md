@@ -40,7 +40,7 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 - **A2** : le nettoyage supprime tout ce qui n'est pas le livre (menu du site, « Commentary », « Download », « THE END », ©, numéros de page), recolle les mots coupés en fin de ligne et normalise les espaces. — Vérif : exécution hors n8n des nodes Code sur le texte d'un PDF de test ; aucune de ces chaînes ne reste.
 - **A3** : le chunking produit exactement 52 chapitres, numérotés 1 à 52 dans l'ordre, sans chunk vide ; aucun chunk ne dépasse ~350 mots, sauf une phrase unique plus longue. — Vérif : script sur le PDF de test, comparé à `chatbot_epictete/data/enchiridion.json`.
 - **A4** : chaque chunk porte les métadonnées `chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots`, et son texte commence par l'en-tête du chapitre. — Vérif : sortie du node Augmentation.
-- **A5** : si le PDF n'est pas le Manuel (moins de 52 chapitres détectés, ou aucun), l'ingestion s'arrête avec un message d'erreur clair et **rien n'est indexé**. — Vérif : exécution avec un texte sans chapitres → erreur levée avant le vector store.
+- **A5** : si le PDF n'est pas le Manuel (moins de 52 chapitres détectés, ou aucun), l'ingestion s'arrête avec un message d'erreur clair (visible dans *Executions* ; le formulaire, lui, affiche seulement « Problem submitting response ») et **rien n'est indexé**. — Vérif : exécution avec un texte sans chapitres → erreur levée avant le vector store.
 - **A6** : un deuxième envoi du PDF ne double pas les chunks. — Vérif : option « Clear Store » activée dans le node d'insertion ; test manuel dans n8n (2 envois, puis une question : pas de passages en double).
 - **A7** : à la question « What is in our control? » ou « Qu'est-ce qui dépend de nous ? », le bot répond à partir du chapitre 1 et le cite. — Vérif : test manuel dans le chat n8n.
 - **A8** : une question hors livre (« Quelle est la capitale du Japon ? ») donne une réponse du type « je ne trouve pas cela dans le Manuel », sans réponse inventée. — Vérif : test manuel.
@@ -54,6 +54,8 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 - Question posée avant tout envoi de PDF (base vide) → le bot dit qu'il n'a pas trouvé l'information.
 - Redémarrage de n8n → base vidée (limite connue du Simple Vector Store) ; il faut renvoyer le PDF.
 - Numéros de page ou lignes coupées dans le PDF → gérés par le nettoyage (A2).
+- Échec de Gemini pendant un ré-envoi (quota, clé) → la base a déjà été vidée : l'ancien livre est perdu, il faut renvoyer le PDF (limite du Simple Vector Store v1.1, qui vide avant d'insérer).
+- n8n en mode queue (plusieurs workers) → store en mémoire par processus : le chat peut ne rien trouver.
 
 ## Hors périmètre
 - Base vectorielle persistante (Pinecone, Qdrant, Supabase…).
@@ -64,6 +66,11 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 
 ## Écarts découverts pendant le développement
 - **Paragraphes → phrases** : l'extraction PDF de n8n (pdf.js + `parseText`) ne garde pas les paragraphes, seulement un retour à la ligne par ligne visuelle. Les chapitres longs sont donc recoupés entre deux phrases, en parties équilibrées (24 et 29 en 2 parties, 33 en 3 parties : 56 chunks au total).
+
+- **Modèle de chat** : `gemini-2.5-flash` renvoie 404 pour les nouveaux utilisateurs (constaté dans n8n) → `models/gemini-3.8-flash`, recommandé par le message d'erreur de Google et validé dans n8n.
+
+## Revue hostile (sous-agent)
+6 problèmes trouvés : 3 corrigés dans le code et testés (le filtre des en-têtes supprimait du texte en mise en page étroite ; les traits d'union étaient perdus ; « 12. » seul sur sa ligne faisait échouer l'ingestion avec un message trompeur), 3 documentés (procédure « Test step » qui n'indexe rien, erreur générique dans le formulaire, base vidée avant les embeddings).
 
 ## Questions ouvertes
 - (aucune)

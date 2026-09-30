@@ -7,6 +7,6 @@
   },
   "devDependencies": {
     "luxon": "^3.5.0",
-    "pdfjs-dist": "^5.4.296"
+    "pdfjs-dist": "5.4.296"
   }
 }

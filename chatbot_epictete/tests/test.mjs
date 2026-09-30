@@ -120,6 +120,23 @@ const rf = pipeline('extrait_pdf_faux_chapitre.json');
 ok(!rf.erreur && new Set(rf.chunks.map(c => c.chapitre)).size === 52 && rf.chunks.filter(c => c.chapitre === 25).map(c => c.texte).join(' ').includes('50. instance'),
   `une ligne "50. ..." dans le chapitre 25 reste dans le chapitre 25 ${rf.erreur ? '(erreur : ' + rf.erreur + ')' : ''}`);
 
+// Revue hostile #4 : mise en page très étroite (45 pages) -> le filtre des en-têtes ne doit pas manger le texte du livre
+console.log('\n## PDF très étroit (45 pages, lignes courtes qui se répètent)');
+const re = pipeline('extrait_pdf_etroit.json');
+const normE = s => s.replace(/\s+/g, ' ').trim();
+ok(!re.erreur && reference.every(ref => normE(re.chunks.filter(c => c.chapitre === ref.chapitre).map(c => c.texte).join(' ')) === normE(ref.texte)),
+  `texte identique à la référence pour les 52 chapitres ${re.erreur ? '(erreur : ' + re.erreur + ')' : ''}`);
+
+// Revue hostile #5 et #6 : "12." seul sur sa ligne, et vrai trait d'union coupé en fin de ligne
+console.log('\n## Numéro de chapitre seul sur sa ligne + trait d\'union en fin de ligne');
+const rn = pipeline('extrait_pdf_numero_seul.json');
+ok(!rn.erreur && new Set(rn.chunks.map(c => c.chapitre)).size === 52, `"12." seul sur sa ligne : les 52 chapitres sont trouvés ${rn.erreur ? '(erreur : ' + rn.erreur + ')' : ''}`);
+ok(!rn.erreur && rn.chunks.some(c => c.texte.includes('self-restraint')), '"self-" + retour à la ligne + "restraint" donne "self-restraint" (tiret conservé)');
+const cassé = [{ ...repo[0], text: repo[0].text.replace(/^12\. /m, '12 ') }];
+writeFileSync(join(FIX, 'extrait_pdf_chapitre_manquant.json'), JSON.stringify(cassé));
+const rc = pipeline('extrait_pdf_chapitre_manquant.json');
+ok(rc.erreur && /chapitre 12 introuvable/i.test(rc.erreur), `chapitre 12 illisible → message qui dit lequel manque : ${rc.erreur ? '« ' + rc.erreur.replace(/^ERREUR dans "[^"]+" : /, '') + ' »' : 'AUCUNE ERREUR'}`);
+
 // ---------- A11 : pas de secret ----------
 console.log('\n## A11 - aucun secret dans le JSON');
 const brut = readFileSync(WF, 'utf8');

@@ -92,7 +92,7 @@ const nodes = [
     options: { systemMessage: SYSTEM_MESSAGE },
   }),
   node('Google Gemini Chat Model', '@n8n/n8n-nodes-langchain.lmChatGoogleGemini', 1, [300, 940], {
-    modelName: 'models/gemini-2.5-flash',
+    modelName: 'models/gemini-3.8-flash', // gemini-2.5-flash : 404 pour les nouveaux utilisateurs (testé dans n8n)
     options: { temperature: 0.2 },
   }),
   node('Mémoire de la conversation', '@n8n/n8n-nodes-langchain.memoryBufferWindow', 1.3, [520, 940], {
