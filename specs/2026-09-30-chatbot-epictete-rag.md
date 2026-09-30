@@ -1,0 +1,69 @@
+# Chatbot RAG sur le Manuel d'Épictète (n8n)
+
+## Objectif
+Un chatbot n8n qui répond aux questions sur *The Enchiridion* d'Épictète (traduction E. Carter, 52 chapitres) **uniquement à partir du livre**, en citant les chapitres. Le livre est chargé en PDF via un formulaire, qui déclenche toute la chaîne d'ingestion RAG : extraction → nettoyage → chunking → augmentation → vectorisation.
+
+## Architecture (un seul workflow, importable en JSON)
+
+```
+INGESTION
+On form submission (PDF) → Extract from File (PDF → texte) → Nettoyage (Code) → Chunking (Code)
+  → Augmentation (Code) → Simple Vector Store [insert] ← Embeddings Google Gemini
+                                                       ← Default Data Loader
+
+CHAT
+When chat message received → AI Agent ← Google Gemini Chat Model
+                                     ← Simple Memory (historique de la conversation)
+                                     ← Simple Vector Store [outil de recherche] ← Embeddings Google Gemini
+```
+
+Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store (`enchiridion`).
+
+## Choix validés
+| Sujet | Choix |
+|---|---|
+| Chunking | Par chapitre. Un chapitre de plus de ~350 mots est redécoupé par groupes de paragraphes |
+| Augmentation | Métadonnées (`chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots`) + en-tête « Enchiridion – Chapter N » dans le texte vectorisé |
+| Langue | Le bot répond dans la langue de la question et cite les passages en anglais d'origine |
+| Chat | AI Agent + mémoire de conversation + recherche dans le livre |
+| Vector store | Simple Vector Store de n8n (en mémoire) |
+| Modèles | Google Gemini (embeddings + chat), ceux des nodes déjà présents |
+
+## Choix par défaut (non discutés, à contester si besoin)
+- Formulaire : un seul champ fichier, obligatoire, `.pdf` uniquement.
+- Chaque nouvel envoi **vide la base avant d'indexer**, pour ne pas créer de doublons.
+- Recherche : les 4 passages les plus proches (top K = 4).
+- Question hors sujet : le bot répond qu'il ne trouve pas l'information dans le Manuel, sans inventer.
+
+## Affirmations (doivent toutes être vraies à la fin)
+- **A1** : le JSON s'importe dans n8n sans erreur, et tous les nodes sont reliés (plus aucun node isolé comme sur la capture). — Vérif : `jq` (JSON valide, chaque connexion pointe vers un node existant) + import manuel dans n8n.
+- **A2** : le nettoyage supprime tout ce qui n'est pas le livre (menu du site, « Commentary », « Download », « THE END », ©, numéros de page), recolle les mots coupés en fin de ligne et normalise les espaces. — Vérif : exécution hors n8n des nodes Code sur le texte d'un PDF de test ; aucune de ces chaînes ne reste.
+- **A3** : le chunking produit exactement 52 chapitres, numérotés 1 à 52 dans l'ordre, sans chunk vide ; aucun chunk ne dépasse ~350 mots, sauf un paragraphe unique plus long. — Vérif : script sur le PDF de test, comparé à `chatbot_epictete/data/enchiridion.json`.
+- **A4** : chaque chunk porte les métadonnées `chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots`, et son texte commence par l'en-tête du chapitre. — Vérif : sortie du node Augmentation.
+- **A5** : si le PDF n'est pas le Manuel (moins de 52 chapitres détectés, ou aucun), l'ingestion s'arrête avec un message d'erreur clair et **rien n'est indexé**. — Vérif : exécution avec un texte sans chapitres → erreur levée avant le vector store.
+- **A6** : un deuxième envoi du PDF ne double pas les chunks. — Vérif : option « Clear Store » activée dans le node d'insertion ; test manuel dans n8n (2 envois, puis une question : pas de passages en double).
+- **A7** : à la question « What is in our control? » ou « Qu'est-ce qui dépend de nous ? », le bot répond à partir du chapitre 1 et le cite. — Vérif : test manuel dans le chat n8n.
+- **A8** : une question hors livre (« Quelle est la capitale du Japon ? ») donne une réponse du type « je ne trouve pas cela dans le Manuel », sans réponse inventée. — Vérif : test manuel.
+- **A9** : le bot répond en français à une question en français, et en anglais à une question en anglais. — Vérif : test manuel.
+- **A10** : il garde le fil de la conversation : après A7, « Et le chapitre suivant ? » parle du chapitre 2. — Vérif : test manuel.
+- **A11** : aucune clé API dans le JSON, seulement des références aux credentials n8n. — Vérif : `grep` sur le JSON exporté.
+
+## Cas limites
+- PDF vide ou scanné (pas de texte extractible) → erreur « aucun texte extrait », rien d'indexé.
+- Mauvais livre ou autre traduction (53 chapitres) → erreur « N chapitres trouvés au lieu de 52 », rien d'indexé.
+- Question posée avant tout envoi de PDF (base vide) → le bot dit qu'il n'a pas trouvé l'information.
+- Redémarrage de n8n → base vidée (limite connue du Simple Vector Store) ; il faut renvoyer le PDF.
+- Numéros de page ou lignes coupées dans le PDF → gérés par le nettoyage (A2).
+
+## Hors périmètre
+- Base vectorielle persistante (Pinecone, Qdrant, Supabase…).
+- Plusieurs livres ou plusieurs utilisateurs avec des bases séparées.
+- OCR de PDF scannés.
+- Résumés ou mots-clés générés par IA pendant l'ingestion.
+- Interface de chat autre que le chat intégré de n8n.
+
+## Questions ouvertes
+- (aucune)
+
+## Préparer le PDF
+Ouvrir http://classics.mit.edu/Epictetus/epicench.html → Ctrl+P → « Enregistrer au format PDF ».
