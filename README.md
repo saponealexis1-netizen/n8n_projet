@@ -1,103 +1,65 @@
-# 🏇 Récap Top 5 courses du week-end (démo)
+# n8n_projet
 
-Flow n8n qui envoie chaque lundi aux joueurs un récap personnalisé des **5 plus grosses courses françaises du week-end**, avec leurs arrivées.
+Projets d'automatisation **n8n**, construits avec Claude Code et 3 skills maison qui imposent une méthode : **spec → développement dans le doute → revue hostile**.
 
-## Objectif
+## Projets
 
-| But | Cible | Message |
+| # | Projet | Description | Statut |
+|---|---|---|---|
+| 01 | [🏇 Récap Top 5 courses du week-end (PMU)](projets/01_pmu_recap_weekend/) | Chaque lundi 9h30, récupère les courses françaises du week-end (API PMU), sélectionne le top 5 par allocation et envoie un mail personnalisé selon le segment client (actif / inactif) | Démo |
+| 02 | [📖 Chatbot RAG - Manuel d'Épictète](projets/02_chatbot_epictete/) | Chatbot qui répond aux questions sur le Manuel d'Épictète uniquement à partir du livre, en citant les chapitres. Ingestion RAG complète : extraction → nettoyage → chunking → augmentation → vectorisation | ✅ Validé dans n8n |
+
+Chaque projet a son propre README : installation dans n8n, fonctionnement, limites connues.
+
+## Structure du repo
+
+```
+n8n_projet/
+├── README.md                      ← ce fichier
+├── .claude/skills/                ← les 3 skills Claude Code (génériques)
+│   ├── interview-spec/
+│   ├── doubt-driven-dev/
+│   └── hostile-review/
+├── specs/                         ← specs écrites avec /interview-spec
+│   └── 2026-09-30-chatbot-epictete-rag.md
+├── projets/
+│   ├── 01_pmu_recap_weekend/
+│   │   ├── README.md
+│   │   ├── workflow_recap_weekend.json     ← à importer dans n8n
+│   │   └── tests/fixtures/
+│   └── 02_chatbot_epictete/
+│       ├── README.md
+│       ├── workflow_chatbot_epictete.json  ← à importer dans n8n
+│       ├── data/                            ← le livre (PDF + texte de référence)
+│       ├── src/                             ← code des nodes Code
+│       ├── scripts/                         ← génération du workflow
+│       └── tests/                           ← tests automatiques + fixtures
+├── tools/
+│   └── run-code-node.mjs          ← exécute un node Code n8n hors de n8n (partagé)
+└── package.json                   ← dépendances de test (luxon, pdfjs-dist)
+```
+
+## Les skills Claude Code
+
+Skills **génériques**, réutilisables sur n'importe quel projet : il suffit de copier `.claude/skills/`. Dans Claude Code, on les lance dans cet ordre :
+
+| Skill | Rôle | Ce qu'il produit |
 |---|---|---|
-| **Fidéliser** | Actifs | Rester connecté aux temps forts hippiques |
-| **Réactiver** | Inactifs (3 à 6 mois sans jouer) | Montrer ce qu'ils ont raté |
+| **`/interview-spec`** | Explore l'existant, interviewe par petits lots, challenge les réponses vagues | Une spec `specs/*.md` : objectif, **affirmations vérifiables**, cas limites, hors périmètre |
+| **`/doubt-driven-dev`** | Implémente en doutant de chaque résultat : hypothèses listées et vérifiées, code exécuté sur des cas limites, diff relu comme celui d'un autre | Le code + un tableau honnête affirmation / statut / preuve |
+| **`/hostile-review`** | Attaque le projet pour le casser, idéalement via un sous-agent qui n'a pas écrit le code ; ne garde que ce qui est prouvé | Un rapport trié par gravité : scénario qui casse, preuve, correctif proposé |
 
-L'impact se mesure sur l'évolution des enjeux avant et après l'envoi, comparée à celle d'un **groupe témoin**.
+Exemple concret : le [chatbot Épictète](projets/02_chatbot_epictete/#comment-il-a-été-construit-skills-du-repo) a été construit avec les 3 skills (11 affirmations, 3 pièges n8n évités, 6 problèmes trouvés par la revue hostile).
 
-## Fonctionnement
-
-```
-Lundi 9h30 ─┬─► 50 clients fictifs ─┬─► Excel ─► Google Drive (archive)
-            │                       └─► Filtre actifs + inactifs ──┐
-            │                                                      ├─► Clients × Top 5 ─► Mail HTML ─► Gmail
-            └─► Dates du week-end ─► API PMU ─► Courses FR ─► Top 5 ┘
-                                        └──── en cas d'échec ────► Alerte échec (mail interne)
-```
-
-| | |
-|---|---|
-| **Hébergement** | n8n Cloud |
-| **Déclenchement** | Chaque lundi à 9h30 (Europe/Paris) sur le week-end précédent, ou via « Test manuel » |
-| **Courses** | API turfinfo PMU, courses françaises (`FRA`) uniquement, top 5 par allocation |
-| **Fallback** | Seuil 30 000 € → 15 000 € → sans seuil, jusqu'à avoir 5 courses |
-| **Clients** | 50 comptes fictifs régénérés à chaque exécution, Excel archivé sur Google Drive |
-| **Envoi** | Gmail, 1 mail par segment en démo (`DEMO_UN_PAR_SEGMENT = true`) vers une adresse de test (`EMAIL_TEST`) |
-
-## Segmentation
-
-Basée sur `dt_hr_reference_hippique` (date de la dernière activité hippique).
-
-| Segment | Jours sans activité | Mail |
-|---|---|---|
-| Actif | 0 – 60 | Fidélisation |
-| Hors cible | 61 – 90 | Aucun |
-| Inactif | 91 – 180 | Réactivation |
-| Exclu | > 180 | Aucun |
-
-## Personnalisation du mail
-
-- **Selon le segment** : objet, bandeau, couleur, intro, bouton et P.S.
-- **Commun** : le tableau des 5 courses (jour, heure, course, hippodrome, allocation, gagnant, arrivée).
-
-## Sécurité
-
-- **API PMU** : 3 tentatives espacées de 5 s, puis un mail d'alerte interne.
-- **Aucune course française** : pas d'envoi aux clients et un mail d'alerte.
-- **Pied de mail** : mention jeu responsable ANJ (09 74 75 13 13) et lien de désinscription.
-
-## KPIs
-
-1. Taux d'ouverture et taux de clic.
-2. Enjeux avant / après l'envoi (Dataiku), comparés au groupe témoin.
-
-## Passage en prod
-
-| Élément | Démo | Prod |
-|---|---|---|
-| Clients | 50 comptes fictifs | Scénario **Dataiku** : actifs 0-60 j, inactifs 91-180 j, exclusion des non opt-in et des auto-exclus, groupe témoin |
-| Liaison | — | n8n lance le scénario via l'API Dataiku, puis lit le dataset produit |
-| Hébergement | n8n Cloud | n8n **auto-hébergé PMU** |
-| Accès | — | Clé API Dataiku (dans les credentials n8n, jamais dans le code) |
-| Envoi | 1 mail par segment vers l'adresse de test | Tous les comptes ciblés, liens réels à la place des `href="#"` |
-
-## Limites connues (démo)
-
-- Si l'API échoue pour **un seul** des deux jours, le mail part quand même avec l'autre jour (et l'alerte est envoyée).
-- Un « Test manuel » lancé un **dimanche** prend le week-end précédent, pas celui en cours. Pour forcer des dates, remplir `FORCE` dans « Dates du week-end ».
-
-## Contenu du repo
-
-```
-workflows/recap_weekend_complet.json   Le flow n8n (à importer dans n8n)
-.claude/skills/                        Skills Claude Code génériques (spec, dev, review)
-specs/                                 Specs produites par /interview-spec
-tools/run-code-node.mjs                Exécute un node Code hors n8n
-tools/fixtures/                        Données de test
-```
-
-### Importer le flow
-
-Dans n8n : **Workflows → Import from File** → `workflows/recap_weekend_complet.json`. Ensuite, connecter les credentials Gmail et Google Drive et remplacer `ton.email@exemple.com` (node « Génération clients fictifs » et node « Alerte échec »).
-
-### Skills Claude Code
-
-Skills **génériques** (réutilisables sur n'importe quel projet : il suffit de copier `.claude/skills/`). À utiliser dans cet ordre pour toute évolution :
-
-1. **`/interview-spec`** : explorer l'existant, interviewer, challenger, puis écrire la spec `specs/*.md` (objectif + affirmations vérifiables).
-2. **`/doubt-driven-dev`** : implémenter en doutant de chaque résultat ; rien n'est « fini » sans preuve.
-3. **`/hostile-review`** : attaquer le code pour le casser, prouver chaque problème, puis rendre un rapport trié par gravité.
-
-### Tester un node Code hors n8n
+## Tests
 
 ```bash
 npm install
-node tools/run-code-node.mjs workflows/recap_weekend_complet.json "Dates du week-end" tools/fixtures/vide.json --now 2026-09-28T09:30
-node tools/run-code-node.mjs workflows/recap_weekend_complet.json "Aplatir les courses" tools/fixtures/programme_pmu.json --ref "Dates du week-end=tools/fixtures/dates.json"
+npm test                 # tests du chatbot Épictète
+```
+
+Pour exécuter un node Code d'un workflow hors de n8n :
+
+```bash
+node tools/run-code-node.mjs <workflow.json> "<Nom du node>" <input.json> [--ref "Node=fichier.json"] [--now 2026-09-28T09:30]
 ```

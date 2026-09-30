@@ -1,5 +1,5 @@
 // Assemble le workflow n8n importable à partir des nodes Code de src/
-// Usage : node chatbot_epictete/scripts/build-workflow.mjs  -> chatbot_epictete/workflow_chatbot_epictete.json
+// Usage : node projets/02_chatbot_epictete/scripts/build-workflow.mjs  -> projets/02_chatbot_epictete/workflow_chatbot_epictete.json
 //
 // Types et versions des nodes vérifiés dans les définitions officielles
 // (@n8n/n8n-nodes-langchain 2.41.3 et n8n-nodes-base 2.41.3, dossier dist/node-definitions).

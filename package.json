@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "node:run": "node tools/run-code-node.mjs"
+    "test": "node projets/02_chatbot_epictete/tests/test.mjs",
+    "build:chatbot": "node projets/02_chatbot_epictete/scripts/build-workflow.mjs"
   },
   "devDependencies": {
     "luxon": "^3.5.0",

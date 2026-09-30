@@ -1,5 +1,5 @@
 // Découpe enchiridion_source.txt en un passage par chapitre -> enchiridion.json + enchiridion.csv
-// Usage : node chatbot_epictete/scripts/decouper.mjs
+// Usage : node projets/02_chatbot_epictete/scripts/decouper.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const dir = new URL('../data/', import.meta.url);

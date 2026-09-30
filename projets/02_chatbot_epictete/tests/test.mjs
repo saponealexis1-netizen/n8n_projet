@@ -1,5 +1,5 @@
 // Tests du workflow (spec : specs/2026-09-30-chatbot-epictete-rag.md)
-// Usage : node chatbot_epictete/tests/test.mjs   (après npm install à la racine du repo)
+// Usage : node projets/02_chatbot_epictete/tests/test.mjs   (après npm install à la racine du repo)
 // Exécute les nodes Code DU JSON (via tools/run-code-node.mjs) sur des textes extraits
 // exactement comme n8n le fait (tests/extraire_comme_n8n.mjs).
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
@@ -7,12 +7,12 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const racine = new URL('../../', import.meta.url).pathname;
-const WF = process.env.WF ?? join(racine, 'chatbot_epictete/workflow_chatbot_epictete.json');
-const FIX = join(racine, 'chatbot_epictete/tests/fixtures');
+const racine = new URL('../../../', import.meta.url).pathname;
+const WF = process.env.WF ?? join(racine, 'projets/02_chatbot_epictete/workflow_chatbot_epictete.json');
+const FIX = join(racine, 'projets/02_chatbot_epictete/tests/fixtures');
 const tmp = mkdtempSync(join(tmpdir(), 'epictete-'));
 const wf = JSON.parse(readFileSync(WF, 'utf8'));
-const reference = JSON.parse(readFileSync(join(racine, 'chatbot_epictete/data/enchiridion.json'), 'utf8'));
+const reference = JSON.parse(readFileSync(join(racine, 'projets/02_chatbot_epictete/data/enchiridion.json'), 'utf8'));
 
 let echecs = 0;
 const ok = (cond, msg) => { console.log(`${cond ? '✅' : '❌'} ${msg}`); if (!cond) echecs++; };
