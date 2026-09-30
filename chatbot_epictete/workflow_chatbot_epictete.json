@@ -109,7 +109,7 @@
     },
     {
       "parameters": {
-        "modelName": "models/gemini-embedding-001"
+        "modelName": "models/gemini-embedding-002"
       },
       "id": "48468252-bbf4-a260-206c-1cc41ee7ddad",
       "name": "Embeddings Google Gemini (ingestion)",
@@ -212,7 +212,7 @@
     },
     {
       "parameters": {
-        "modelName": "models/gemini-3.8-flash",
+        "modelName": "models/gemini-flash-lite-latest",
         "options": {
           "temperature": 0.2
         }
@@ -258,7 +258,7 @@
     },
     {
       "parameters": {
-        "modelName": "models/gemini-embedding-001"
+        "modelName": "models/gemini-embedding-002"
       },
       "id": "115a6677-b6e1-09ab-3322-10d890035122",
       "name": "Embeddings Google Gemini (chat)",

@@ -62,7 +62,7 @@ const nodes = [
     embeddingBatchSize: 200, // tous les chunks (~60) dans un seul lot
   }),
   node('Embeddings Google Gemini (ingestion)', '@n8n/n8n-nodes-langchain.embeddingsGoogleGemini', 1, [1240, 240], {
-    modelName: 'models/gemini-embedding-001',
+    modelName: 'models/gemini-embedding-002', // doit être le MÊME dans les 2 nodes d'embeddings
   }),
   node('Chargeur de documents', '@n8n/n8n-nodes-langchain.documentDefaultDataLoader', 1.1, [1480, 240], {
     jsonMode: 'expressionData',
@@ -92,7 +92,7 @@ const nodes = [
     options: { systemMessage: SYSTEM_MESSAGE },
   }),
   node('Google Gemini Chat Model', '@n8n/n8n-nodes-langchain.lmChatGoogleGemini', 1, [300, 940], {
-    modelName: 'models/gemini-3.8-flash', // gemini-2.5-flash : 404 pour les nouveaux utilisateurs (testé dans n8n)
+    modelName: 'models/gemini-flash-lite-latest', // modèle validé dans n8n (gemini-2.5-flash : 404 pour les nouveaux utilisateurs)
     options: { temperature: 0.2 },
   }),
   node('Mémoire de la conversation', '@n8n/n8n-nodes-langchain.memoryBufferWindow', 1.3, [520, 940], {
@@ -106,7 +106,7 @@ const nodes = [
     topK: 4,
   }),
   node('Embeddings Google Gemini (chat)', '@n8n/n8n-nodes-langchain.embeddingsGoogleGemini', 1, [760, 1160], {
-    modelName: 'models/gemini-embedding-001',
+    modelName: 'models/gemini-embedding-002', // doit être le MÊME dans les 2 nodes d'embeddings
   }),
 ];
 

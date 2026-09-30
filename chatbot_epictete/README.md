@@ -52,7 +52,8 @@ Cliquer sur **Open chat** et écrire la question.
 | La base est vidée **avant** le calcul des embeddings | Si Gemini échoue pendant un ré-envoi (quota 429, clé invalide), l'ancien livre est perdu | Renvoyer le PDF une fois l'erreur passée |
 | Le formulaire n'affiche pas le détail des erreurs | Avec un mauvais PDF, il affiche « Problem submitting response » | Le message exact (« 30 chapitres trouvés au lieu de 52… ») est dans **Executions** |
 | n8n en mode queue (plusieurs workers) | Chaque worker a sa propre mémoire : le chat peut ne rien trouver | Utiliser un vector store persistant (Supabase) |
-| Modèle de chat | `gemini-2.5-flash` n'est plus ouvert aux nouveaux utilisateurs (404) | Le workflow utilise `models/gemini-3.8-flash` ; en cas de 404, choisir un autre modèle dans la liste du node |
+| Modèles | `gemini-2.5-flash` n'est plus ouvert aux nouveaux utilisateurs (404) | Le workflow utilise `models/gemini-flash-lite-latest` (chat) et `models/gemini-embedding-002` (embeddings) ; en cas de 404, choisir un autre modèle dans la liste du node |
+| Changement de modèle d'embeddings | Les vecteurs de deux modèles ne sont pas comparables | Mettre le **même** modèle dans les 2 nodes d'embeddings, puis **réindexer** le PDF |
 | Recherche par numéro de chapitre (« le chapitre suivant ») | La recherche est sémantique, elle peut ramener un autre chapitre | Poser une question sur le contenu plutôt que sur le numéro |
 
 ## Tests manuels à faire dans n8n

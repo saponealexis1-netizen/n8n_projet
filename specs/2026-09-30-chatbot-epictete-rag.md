@@ -67,7 +67,7 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 ## Écarts découverts pendant le développement
 - **Paragraphes → phrases** : l'extraction PDF de n8n (pdf.js + `parseText`) ne garde pas les paragraphes, seulement un retour à la ligne par ligne visuelle. Les chapitres longs sont donc recoupés entre deux phrases, en parties équilibrées (24 et 29 en 2 parties, 33 en 3 parties : 56 chunks au total).
 
-- **Modèle de chat** : `gemini-2.5-flash` renvoie 404 pour les nouveaux utilisateurs (constaté dans n8n) → `models/gemini-3.8-flash`, recommandé par le message d'erreur de Google et validé dans n8n.
+- **Modèle de chat** : `gemini-2.5-flash` renvoie 404 pour les nouveaux utilisateurs (constaté dans n8n) → config validée dans n8n : `models/gemini-flash-lite-latest` (chat) et `models/gemini-embedding-002` (embeddings, identique dans les 2 nodes, livre réindexé après le changement).
 
 ## Revue hostile (sous-agent)
 6 problèmes trouvés : 3 corrigés dans le code et testés (le filtre des en-têtes supprimait du texte en mise en page étroite ; les traits d'union étaient perdus ; « 12. » seul sur sa ligne faisait échouer l'ingestion avec un message trompeur), 3 documentés (procédure « Test step » qui n'indexe rien, erreur générique dans le formulaire, base vidée avant les embeddings).
