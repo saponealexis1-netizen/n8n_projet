@@ -1,0 +1,422 @@
+{
+  "name": "Chatbot RAG - Manuel d'Épictète",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Chatbot Épictète : charger le livre",
+        "formDescription": "Envoie le PDF du Manuel d'Épictète (The Enchiridion, trad. E. Carter). Il sera nettoyé, découpé et indexé ; les indexations précédentes sont remplacées.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Livre PDF",
+              "fieldType": "file",
+              "acceptFileTypes": ".pdf",
+              "multipleFiles": false,
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "appendAttribution": false,
+          "buttonLabel": "Indexer le livre",
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "Livre indexé ✅ Tu peux maintenant poser tes questions dans le chat."
+            }
+          }
+        }
+      },
+      "id": "f56defa4-0b12-88e0-8d84-b88114c26b23",
+      "name": "Formulaire : envoyer le livre (PDF)",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Livre_PDF",
+        "options": {}
+      },
+      "id": "b4969619-7fd2-9543-cbe0-1d496442c90f",
+      "name": "Extraire le texte du PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NETTOYAGE du texte extrait du PDF\n// Entrée : 1 item { text, numpages } (sortie de \"Extraire le texte du PDF\")\n// Sortie : 1 item { texte } avec un chapitre par ligne (\"1. ...\", \"2. ...\")\nconst { text = '', numpages = 1 } = $input.first().json;\nif (!text.trim()) {\n  throw new Error(\"Aucun texte extrait du PDF (PDF vide ou scanné) : rien n'a été indexé.\");\n}\n\nlet lignes = text.replace(/\\r/g, '').split('\\n').map(l => l.replace(/\\s+/g, ' ').trim());\n\n// 1. En-têtes / pieds de page du navigateur : lignes qui reviennent sur plusieurs pages\n//    (les chiffres sont ignorés pour attraper \"1/10\", \"2/10\", la date, etc.)\nconst cle = l => l.replace(/\\d+/g, '#');\nconst freq = {};\nfor (const l of lignes) if (l) freq[cle(l)] = (freq[cle(l)] ?? 0) + 1;\nconst estRepetee = l => numpages >= 3 && freq[cle(l)] >= 3 && l.length < 200;\nconst estParasite = l =>\n  /^(https?|file):\\/\\//i.test(l) ||                  // URL\n  /^(page\\s*)?\\d+\\s*(\\/|of|sur)\\s*\\d+$/i.test(l) ||  // \"3/10\", \"Page 3 of 10\"\n  /^\\d+$/.test(l);                                   // numéro de page seul\nlignes = lignes.filter(l => l && !estRepetee(l) && !estParasite(l));\n\n// 2. Garder uniquement le livre : du chapitre 1 jusqu'à \"THE END\" (menu du site, ©, etc. supprimés)\nconst debut = lignes.findIndex(l => /^1\\. /.test(l));\nif (debut === -1) {\n  throw new Error(\"Chapitre 1 introuvable : ce PDF n'est pas le Manuel d'Épictète (rien n'a été indexé).\");\n}\nconst fin = lignes.findIndex((l, i) => i > debut && /^THE END$/i.test(l));\nlignes = lignes.slice(debut, fin === -1 ? undefined : fin);\n\n// 3. Recoller les lignes coupées : mots coupés par un tiret, puis une ligne par chapitre\nconst texte = lignes.join('\\n')\n  .replace(/([a-z])-\\n([a-z])/g, '$1$2')   // \"philo-\\nsophy\" -> \"philosophy\"\n  .replace(/\\n(?!\\d+\\. )/g, ' ')           // retour à la ligne hors début de chapitre -> espace\n  .replace(/ {2,}/g, ' ')\n  .trim();\n\nreturn [{ json: { texte, nb_caracteres: texte.length, nb_pages: numpages } }];\n"
+      },
+      "id": "01010a10-8661-d763-ef5e-1dc4b044d95b",
+      "name": "Nettoyage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CHUNKING : 1 chunk par chapitre, les chapitres trop longs sont redécoupés par groupes de phrases\n// (le PDF ne conserve pas les paragraphes, on coupe donc entre deux phrases)\nconst NB_CHAPITRES = 52;  // traduction E. Carter (version MIT)\nconst MAX_MOTS = 350;\n\nconst { texte } = $input.first().json;\n\n// Un nouveau chapitre = une ligne \"N. ...\" avec N = chapitre précédent + 1\n// (un \"12. \" isolé au milieu du texte ne crée donc pas de faux chapitre)\nconst chapitres = [];\nfor (const ligne of texte.split('\\n')) {\n  const m = ligne.match(/^(\\d+)\\. ([\\s\\S]*)$/);\n  if (m && Number(m[1]) === chapitres.length + 1) {\n    chapitres.push({ chapitre: Number(m[1]), texte: m[2].trim() });\n  } else if (chapitres.length) {\n    chapitres.at(-1).texte += ' ' + ligne.trim();\n  }\n}\n\nif (chapitres.length !== NB_CHAPITRES) {\n  throw new Error(`${chapitres.length} chapitres trouvés au lieu de ${NB_CHAPITRES} : mauvais livre ou autre traduction (rien n'a été indexé).`);\n}\nconst vide = chapitres.find(c => !c.texte);\nif (vide) throw new Error(`Chapitre ${vide.chapitre} vide : PDF mal extrait (rien n'a été indexé).`);\n\nconst nbMots = s => s.split(/\\s+/).filter(Boolean).length;\n\nfunction decouper(texte) {\n  const total = nbMots(texte);\n  if (total <= MAX_MOTS) return [texte];\n  const cible = total / Math.ceil(total / MAX_MOTS);  // parties de taille équilibrée\n  const phrases = texte.match(/[^.!?]+[.!?]+[\"'’”)\\]]*\\s*|[^.!?]+$/g) ?? [texte];\n  const parties = [];\n  let courante = '';\n  for (const p of phrases) {\n    if (courante && nbMots(courante) + nbMots(p) > cible * 1.15) {\n      parties.push(courante.trim());\n      courante = '';\n    }\n    courante += p;\n  }\n  if (courante.trim()) parties.push(courante.trim());\n  return parties;\n}\n\nreturn chapitres.flatMap(c => {\n  const parties = decouper(c.texte);\n  return parties.map((texte, i) => ({\n    json: { chapitre: c.chapitre, partie: i + 1, nb_parties: parties.length, texte },\n  }));\n});\n"
+      },
+      "id": "e1385c29-827c-0421-d323-ac9f4284e20d",
+      "name": "Chunking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AUGMENTATION : métadonnées + en-tête de chapitre ajouté au texte vectorisé\n// (l'en-tête aide la recherche sur \"chapitre 5\" et permet au bot de citer sa source)\nconst LIVRE = \"The Enchiridion (Manuel d'Épictète)\";\nconst AUTEUR = 'Epictetus';\nconst TRADUCTION = 'Elizabeth Carter (1758)';\n\nreturn $input.all().map(({ json: c }) => {\n  const entete = `Enchiridion – Chapter ${c.chapitre}` + (c.nb_parties > 1 ? ` (part ${c.partie}/${c.nb_parties})` : '');\n  return {\n    json: {\n      texte: `${entete}\\n${c.texte}`,\n      chapitre: c.chapitre,\n      partie: c.partie,\n      nb_parties: c.nb_parties,\n      livre: LIVRE,\n      auteur: AUTEUR,\n      traduction: TRADUCTION,\n      source: `${AUTEUR}, ${entete}, trans. ${TRADUCTION}`,\n      nb_mots: c.texte.split(/\\s+/).filter(Boolean).length,\n    },\n  };\n});\n"
+      },
+      "id": "fb28e255-fcd2-ab2e-bdbc-225cf0b18017",
+      "name": "Augmentation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "memoryKey": "enchiridion",
+        "clearStore": true,
+        "embeddingBatchSize": 200
+      },
+      "id": "7f2356a1-9604-2a9c-0dc6-621180fdab0f",
+      "name": "Vectorisation (Simple Vector Store)",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreInMemory",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "id": "48468252-bbf4-a260-206c-1cc41ee7ddad",
+      "name": "Embeddings Google Gemini (ingestion)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.texte }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "chapitre",
+                "value": "={{ $json.chapitre }}"
+              },
+              {
+                "name": "partie",
+                "value": "={{ $json.partie }}"
+              },
+              {
+                "name": "livre",
+                "value": "={{ $json.livre }}"
+              },
+              {
+                "name": "traduction",
+                "value": "={{ $json.traduction }}"
+              },
+              {
+                "name": "source",
+                "value": "={{ $json.source }}"
+              },
+              {
+                "name": "nb_mots",
+                "value": "={{ $json.nb_mots }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "47576423-1103-6f42-139f-fe91c4a9644e",
+      "name": "Chargeur de documents",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1480,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 6000,
+        "chunkOverlap": 0,
+        "options": {}
+      },
+      "id": "1ac962f5-4a3d-4f2e-924d-c2b40b4655da",
+      "name": "Pas de re-découpage (chunks déjà prêts)",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "1fd72042-58c5-481a-d122-db74369afdee",
+      "name": "Chat : question sur le livre",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "Tu es un guide du Manuel d'Épictète (« The Enchiridion », traduction anglaise d'Elizabeth Carter, 52 chapitres).\n\nRègles :\n1. Pour toute question sur le contenu, cherche TOUJOURS d'abord dans le livre avec l'outil « manuel_epictete ».\n2. Réponds UNIQUEMENT à partir des passages trouvés. S'ils ne contiennent pas la réponse, dis simplement que tu ne trouves pas cette information dans le Manuel d'Épictète. N'utilise jamais tes connaissances générales et n'invente rien.\n3. Réponds dans la langue de la question (français → français, anglais → anglais).\n4. Cite toujours tes sources avec le numéro de chapitre, par ex. (Chapitre 5) ou (Chapter 5). Tu peux citer de courts extraits en anglais d'origine, entre guillemets.\n5. Si on te parle d'un chapitre précis (« chapitre 8 », « le chapitre suivant »), utilise l'historique de la conversation pour trouver son numéro et cherche « Enchiridion – Chapter N ».\n6. Sois clair et concis."
+        }
+      },
+      "id": "71e35798-2990-4af0-2adc-99fe952ea5c6",
+      "name": "Agent Épictète",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "7e59f9c3-ba6b-f04c-0504-b62287735bb2",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        300,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 10
+      },
+      "id": "7515837d-0617-7b1f-a968-a0fb3b31ea01",
+      "name": "Mémoire de la conversation",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        520,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "manuel_epictete",
+        "toolDescription": "Recherche les passages du Manuel d'Épictète (The Enchiridion, trad. E. Carter) les plus proches de la question. Chaque passage indique son chapitre. À utiliser pour toute question sur le contenu du livre.",
+        "memoryKey": "enchiridion",
+        "topK": 4
+      },
+      "id": "6723aa8b-2d3c-54e5-968e-103e81328c3a",
+      "name": "Recherche dans le livre",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreInMemory",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "id": "115a6677-b6e1-09ab-3322-10d890035122",
+      "name": "Embeddings Google Gemini (chat)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        760,
+        1160
+      ]
+    }
+  ],
+  "connections": {
+    "Formulaire : envoyer le livre (PDF)": {
+      "main": [
+        [
+          {
+            "node": "Extraire le texte du PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire le texte du PDF": {
+      "main": [
+        [
+          {
+            "node": "Nettoyage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nettoyage": {
+      "main": [
+        [
+          {
+            "node": "Chunking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunking": {
+      "main": [
+        [
+          {
+            "node": "Augmentation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Augmentation": {
+      "main": [
+        [
+          {
+            "node": "Vectorisation (Simple Vector Store)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini (ingestion)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vectorisation (Simple Vector Store)",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chargeur de documents": {
+      "ai_document": [
+        [
+          {
+            "node": "Vectorisation (Simple Vector Store)",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pas de re-découpage (chunks déjà prêts)": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Chargeur de documents",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat : question sur le livre": {
+      "main": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mémoire de la conversation": {
+      "ai_memory": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recherche dans le livre": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini (chat)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Recherche dans le livre",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

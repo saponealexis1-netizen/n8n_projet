@@ -6,6 +6,7 @@
     "node:run": "node tools/run-code-node.mjs"
   },
   "devDependencies": {
-    "luxon": "^3.5.0"
+    "luxon": "^3.5.0",
+    "pdfjs-dist": "^5.4.296"
   }
 }

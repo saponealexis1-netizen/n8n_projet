@@ -22,7 +22,7 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 ## Choix validés
 | Sujet | Choix |
 |---|---|
-| Chunking | Par chapitre. Un chapitre de plus de ~350 mots est redécoupé par groupes de paragraphes |
+| Chunking | Par chapitre. Un chapitre de plus de ~350 mots est redécoupé par groupes de **phrases** (voir « Écarts ») |
 | Augmentation | Métadonnées (`chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots`) + en-tête « Enchiridion – Chapter N » dans le texte vectorisé |
 | Langue | Le bot répond dans la langue de la question et cite les passages en anglais d'origine |
 | Chat | AI Agent + mémoire de conversation + recherche dans le livre |
@@ -38,7 +38,7 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 ## Affirmations (doivent toutes être vraies à la fin)
 - **A1** : le JSON s'importe dans n8n sans erreur, et tous les nodes sont reliés (plus aucun node isolé comme sur la capture). — Vérif : `jq` (JSON valide, chaque connexion pointe vers un node existant) + import manuel dans n8n.
 - **A2** : le nettoyage supprime tout ce qui n'est pas le livre (menu du site, « Commentary », « Download », « THE END », ©, numéros de page), recolle les mots coupés en fin de ligne et normalise les espaces. — Vérif : exécution hors n8n des nodes Code sur le texte d'un PDF de test ; aucune de ces chaînes ne reste.
-- **A3** : le chunking produit exactement 52 chapitres, numérotés 1 à 52 dans l'ordre, sans chunk vide ; aucun chunk ne dépasse ~350 mots, sauf un paragraphe unique plus long. — Vérif : script sur le PDF de test, comparé à `chatbot_epictete/data/enchiridion.json`.
+- **A3** : le chunking produit exactement 52 chapitres, numérotés 1 à 52 dans l'ordre, sans chunk vide ; aucun chunk ne dépasse ~350 mots, sauf une phrase unique plus longue. — Vérif : script sur le PDF de test, comparé à `chatbot_epictete/data/enchiridion.json`.
 - **A4** : chaque chunk porte les métadonnées `chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots`, et son texte commence par l'en-tête du chapitre. — Vérif : sortie du node Augmentation.
 - **A5** : si le PDF n'est pas le Manuel (moins de 52 chapitres détectés, ou aucun), l'ingestion s'arrête avec un message d'erreur clair et **rien n'est indexé**. — Vérif : exécution avec un texte sans chapitres → erreur levée avant le vector store.
 - **A6** : un deuxième envoi du PDF ne double pas les chunks. — Vérif : option « Clear Store » activée dans le node d'insertion ; test manuel dans n8n (2 envois, puis une question : pas de passages en double).
@@ -61,6 +61,9 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 - OCR de PDF scannés.
 - Résumés ou mots-clés générés par IA pendant l'ingestion.
 - Interface de chat autre que le chat intégré de n8n.
+
+## Écarts découverts pendant le développement
+- **Paragraphes → phrases** : l'extraction PDF de n8n (pdf.js + `parseText`) ne garde pas les paragraphes, seulement un retour à la ligne par ligne visuelle. Les chapitres longs sont donc recoupés entre deux phrases, en parties équilibrées (24 et 29 en 2 parties, 33 en 3 parties : 56 chunks au total).
 
 ## Questions ouvertes
 - (aucune)
