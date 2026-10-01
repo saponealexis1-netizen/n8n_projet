@@ -53,8 +53,14 @@ ok(!wf.connections["7. Sauvegarder l'échange (SQL)"], 'la sauvegarde est le der
 const llm = ['3. Routing (Gemini)', '5. Reranking (Gemini)', '6. Generation (Gemini)'].map(n);
 ok(['3. Routing (Gemini)', '4. Search : embedding de la requête (Gemini)', '5. Reranking (Gemini)', '6. Generation (Gemini)'].map(n).every(x => x.retryOnFail === true && x.maxTries >= 3 && x.waitBetweenTries >= 5000),
   'erreurs Gemini passagères (429, 503) : les 4 appels du chat réessaient 3 fois, à 5 s d\'intervalle');
-ok(llm.every(x => x.parameters.url.endsWith('models/gemini-flash-lite-latest:generateContent') && x.parameters.nodeCredentialType === 'googlePalmApi'),
-  'les 3 appels LLM : generateContent sur gemini-flash-lite-latest, avec le credential Gemini existant');
+ok(llm.every(x => x.type === '@n8n/n8n-nodes-langchain.googleGemini' && x.parameters.resource === 'text' && x.parameters.operation === 'message'
+    && x.parameters.modelId?.value === 'models/gemini-flash-lite-latest' && x.parameters.simplify === false),
+  'les 3 appels LLM utilisent le node Google Gemini natif (gemini-flash-lite-latest, sortie brute { candidates })');
+ok(llm[0].parameters.jsonOutput === true && llm[1].parameters.jsonOutput === true && llm[2].parameters.jsonOutput === false, 'routing et reranking en mode JSON, génération en texte libre');
+ok(llm.every(x => /\$json\.prompt_\w+\.message/.test(x.parameters.messages.values[0].content) && /\$json\.prompt_\w+\.systeme/.test(x.parameters.options.systemMessage)),
+  'chaque node Gemini lit le prompt (système + message) préparé par le node Code précédent');
+ok(wf.nodes.filter(x => x.type === 'n8n-nodes-base.httpRequest').every(x => /embedContent|batchEmbedContents/.test(x.parameters.url)),
+  'les seuls HTTP Request restants sont les embeddings (pas de node Gemini natif qui renvoie un vecteur)');
 ok(/epictete_recherche_hybride\(\$1, \$2::vector, 10\)/.test(n('4. Search : recherche hybride (SQL)').parameters.query), 'R3 : la recherche hybride renvoie 10 candidats au reranking');
 const modeleIngestion = n('Préparer les embeddings').parameters.jsCode.match(/MODELE = '([^']+)'/)[1];
 ok(n('4. Search : embedding de la requête (Gemini)').parameters.url.includes(modeleIngestion), `même modèle d'embeddings pour l'ingestion et la recherche (${modeleIngestion})`);
@@ -80,7 +86,7 @@ ok(lire('{"route":"livre","chapitre":99,"requete":"x"}').chapitre === null, 'R2 
 const routage = { sessionId: 's', question: 'q', historique: 'h', route: 'livre', requete: 'r', chapitre: null, langue: 'fr' };
 const cands = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, chapitre: i + 1, partie: 1, content: `Enchiridion – Chapter ${i + 1}\ntexte ${i + 1}` }));
 const prep = run('5. Reranking : préparer', cands, { '3. Routing : lire la décision': [routage] });
-ok(prep[0].candidats.length === 10 && /\[10\] \(chapitre 10\)/.test(prep[0].corps_reranking.contents[0].parts[0].text), 'R4 : les 10 candidats sont numérotés et envoyés au reranking');
+ok(prep[0].candidats.length === 10 && /\[10\] \(chapitre 10\)/.test(prep[0].prompt_reranking.message), 'R4 : les 10 candidats sont numérotés et envoyés au reranking');
 const garder = (texte, r = routage) => run('5. Reranking : garder les meilleurs', gemini(texte), { '3. Routing : lire la décision': [r], '5. Reranking : préparer': prep })[0];
 let g = garder(JSON.stringify({ scores: [{ id: 1, score: 3 }, { id: 2, score: 9 }, { id: 3, score: 6 }, { id: 4, score: 10 }, { id: 5, score: 5 }, { id: 6, score: 8 }, { id: 7, score: 1 }] }));
 ok(JSON.stringify(g.chapitres) === '[4,2,6,3]', `R4 : garde au plus 4 passages notés ≥ 5, triés par note (${g.chapitres})`);
@@ -99,9 +105,9 @@ ok(JSON.stringify(garder(JSON.stringify({ scores: [{ id: 2, score: '8/10' }, { i
 g = garder('pas du JSON');
 ok(JSON.stringify(g.chapitres) === '[1,2,3,4]', `R4 : notation illisible → les 4 premiers de la recherche hybride (${g.chapitres})`);
 g = garder(JSON.stringify({ scores: [{ id: 1, score: 1 }, { id: 2, score: 0 }] }));
-ok(g.chapitres.length === 0 && /aucun passage pertinent/.test(g.corps_generation.contents[0].parts[0].text), 'R5 : aucun passage pertinent → la génération le sait (et doit dire qu\'elle ne trouve pas)');
-ok(/Réponds en anglais/.test(garder('{}', { ...routage, langue: 'en' }).corps_generation.systemInstruction.parts[0].text), 'R5 : la génération répond dans la langue de la question');
-ok(/Réponds dans cette langue : es/.test(garder('{}', { ...routage, langue: 'es' }).corps_generation.systemInstruction.parts[0].text), 'R5 : une question en espagnol → réponse demandée en espagnol (es)');
+ok(g.chapitres.length === 0 && /aucun passage pertinent/.test(g.prompt_generation.message), 'R5 : aucun passage pertinent → la génération le sait (et doit dire qu\'elle ne trouve pas)');
+ok(/Réponds en anglais/.test(garder('{}', { ...routage, langue: 'en' }).prompt_generation.systeme), 'R5 : la génération répond dans la langue de la question');
+ok(/Réponds dans cette langue : es/.test(garder('{}', { ...routage, langue: 'es' }).prompt_generation.systeme), 'R5 : une question en espagnol → réponse demandée en espagnol (es)');
 ok(lire('{"route":"livre","requete":"x","langue":"es"}').langue === 'es' && lire('{"route":"livre","requete":"x","langue":"pirate"}').langue === 'fr', 'R2 : langue = code à 2 lettres, sinon français');
 const vide = run('6. Generation : réponse', [{ candidates: [] }], { '3. Routing : lire la décision': [{ ...routage, langue: 'en' }], '5. Reranking : garder les meilleurs': [{ chapitres: [] }] })[0];
 ok(/couldn't generate/.test(vide.reponse), 'réponse Gemini vide → message d\'excuse au lieu d\'une bulle vide');
@@ -153,7 +159,7 @@ const t1 = await conversation('A', 'Qu\'est-ce qui dépend de nous ?', {
   vecteur: '1-1', reranking: noter(1), generation: 'Selon Épictète, nos opinions et nos désirs dépendent de nous (Chapitre 1).',
 });
 ok(t1.contexte.historique === '(début de la conversation)', 'R1 : nouvelle session → pas d\'historique');
-ok(t1.contexte.corps_routing.contents[0].parts[0].text.endsWith("Dernière question : Qu'est-ce qui dépend de nous ?"), 'R2 : le routing reçoit bien la question posée');
+ok(t1.contexte.prompt_routing.message.endsWith("Dernière question : Qu'est-ce qui dépend de nous ?"), 'R2 : le routing reçoit bien la question posée');
 ok(t1.candidats?.length === 10 && t1.candidats[0].chapitre === 1, `R3 : 10 candidats, le chapitre 1 en tête (${t1.candidats?.map(c => c.chapitre).join(',') ?? 'AUCUNE RECHERCHE'})`);
 ok(JSON.stringify(t1.choix?.chapitres) === '[1]', 'R4 : le reranking ne garde que le passage pertinent (chapitre 1)');
 ok(t1.sortie.length === 1 && t1.sortie[0].output === t1.final.reponse, 'R7 : le chat reçoit { output } = la réponse générée');
@@ -162,7 +168,7 @@ const t2 = await conversation('A', 'Et le chapitre suivant ?', {
   routing: '{"route":"livre","requete":"Enchiridion – Chapter 2","chapitre":2,"langue":"fr","reponse_directe":""}',
   vecteur: '30-1', reranking: () => JSON.stringify({ scores: [{ id: 1, score: 3 }] }), generation: 'Le chapitre 2 parle du désir et de l\'aversion (Chapitre 2).',
 });
-ok(/Utilisateur : Qu'est-ce qui dépend de nous \?/.test(t2.contexte.corps_routing.contents[0].parts[0].text), 'R1/R2 : le routing reçoit l\'échange précédent pour résoudre « le chapitre suivant »');
+ok(/Utilisateur : Qu'est-ce qui dépend de nous \?/.test(t2.contexte.prompt_routing.message), 'R1/R2 : le routing reçoit l\'échange précédent pour résoudre « le chapitre suivant »');
 ok(t2.candidats?.[0]?.chapitre === 2 && t2.choix?.chapitres[0] === 2, 'R2-R4 : « Chapter 2 » → chapitre 2 en tête de la recherche et gardé malgré une note de 3');
 
 const t3 = await conversation('A', 'Merci beaucoup !', { routing: '{"route":"conversation","requete":"","chapitre":null,"langue":"fr","reponse_directe":"Avec plaisir !"}' });

@@ -332,13 +332,24 @@ ecrire('workflow_chatbot_epictete_hybride.json', {
 
 // ---------- Variante ANSWERING : Input → Context → Routing → Search → Reranking → Generation ----------
 // Même ingestion que l'hybride (même table epictete_chunks). Le chat n'a plus d'agent : chaque étape
-// est un node visible. Les 3 appels LLM passent par l'API Gemini generateContent (HTTP Request).
+// est un node visible. Les 3 appels LLM utilisent le node Google Gemini natif.
 // SQL en plus : supabase/setup_answering.sql (table epictete_conversations).
 const MODELE_CHAT = 'models/gemini-flash-lite-latest';  // modèle de chat validé dans n8n
 // Erreurs passagères de Gemini (429 quota, 503 surcharge) : 3 essais à 5 s d'intervalle
 const reessayer = n => ({ ...n, retryOnFail: true, maxTries: 3, waitBetweenTries: 5000 });
-const geminiGenerer = (name, position, corps) =>
-  reessayer(httpGemini(name, position, `=${GEMINI}/${MODELE_CHAT}:generateContent`, `={{ JSON.stringify($json.${corps}) }}`));
+// Appels TEXTE : node Google Gemini natif (plus d'HTTP Request). simplify = false → sortie brute
+// { candidates: [...] }, le format que lisent les nodes Code. jsonOutput = réponse JSON (routing, reranking).
+// Les embeddings restent en HTTP : n8n n'a pas de node Gemini natif qui renvoie un vecteur
+// (le sous-node "Embeddings Google Gemini" ne se branche que sur un vector store).
+const geminiTexte = (name, position, prompt, json) => reessayer(node(name, '@n8n/n8n-nodes-langchain.googleGemini', 1, position, {
+  resource: 'text',
+  operation: 'message',
+  modelId: { __rl: true, mode: 'id', value: MODELE_CHAT },
+  messages: { values: [{ content: `={{ $json.${prompt}.message }}`, role: 'user' }] },
+  simplify: false,
+  jsonOutput: json,
+  options: { systemMessage: `={{ $json.${prompt}.systeme }}`, temperature: json ? 0 : 0.2 },
+}));
 const ROUTING = '3. Routing : lire la décision';
 const X = i => 220 * i;
 
@@ -356,7 +367,7 @@ const answeringNodes = [
     '={{ [ $json.sessionId ] }}',
     { alwaysOutputData: true }),  // nouvelle conversation → 0 ligne → 1 item vide
   node('2. Context : construire', 'n8n-nodes-base.code', 2, [X(2), 700], { jsCode: code('8_contexte.js') }),
-  geminiGenerer('3. Routing (Gemini)', [X(3), 700], 'corps_routing'),
+  geminiTexte('3. Routing (Gemini)', [X(3), 700], 'prompt_routing', true),
   node(ROUTING, 'n8n-nodes-base.code', 2, [X(4), 700], { jsCode: code('9_routing.js') }),
   node('3. Routing : chercher dans le livre ?', 'n8n-nodes-base.if', 2.2, [X(5), 700], {
     conditions: {
@@ -373,9 +384,9 @@ const answeringNodes = [
     `={{ [ $('${ROUTING}').first().json.requete, '[' + $json.embedding.values.join(',') + ']' ] }}`,
     { alwaysOutputData: true }),
   node('5. Reranking : préparer', 'n8n-nodes-base.code', 2, [X(8), 600], { jsCode: code('10_reranking_preparer.js') }),
-  geminiGenerer('5. Reranking (Gemini)', [X(9), 600], 'corps_reranking'),
+  geminiTexte('5. Reranking (Gemini)', [X(9), 600], 'prompt_reranking', true),
   node('5. Reranking : garder les meilleurs', 'n8n-nodes-base.code', 2, [X(10), 600], { jsCode: code('11_reranking_selection.js') }),
-  geminiGenerer('6. Generation (Gemini)', [X(11), 600], 'corps_generation'),
+  geminiTexte('6. Generation (Gemini)', [X(11), 600], 'prompt_generation', false),
   node('6. Generation : réponse', 'n8n-nodes-base.code', 2, [X(12), 600], { jsCode: code('12_generation_reponse.js') }),
   node('Réponse directe (sans recherche)', 'n8n-nodes-base.code', 2, [X(9), 820], { jsCode: code('13_reponse_directe.js') }),
   // Dernier node : enregistre l'échange (Context de la prochaine question) et renvoie { output } au chat

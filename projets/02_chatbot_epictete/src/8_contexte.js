@@ -1,4 +1,4 @@
-// 2. CONTEXT : rassemble la question, la session et les derniers échanges, puis prépare l'appel de ROUTING
+// 2. CONTEXT : rassemble la question, la session et les derniers échanges, puis prépare le prompt du ROUTING
 // Entrée : lignes de "Context : historique (SQL)" (0 à 3 échanges, du plus ancien au plus récent)
 const { chatInput, sessionId } = $('1. Input (chat)').first().json;
 const question = String(chatInput ?? '').trim();
@@ -24,10 +24,9 @@ return [{
     sessionId,
     question,
     historique,
-    corps_routing: {
-      systemInstruction: { parts: [{ text: CONSIGNES_ROUTING }] },
-      contents: [{ role: 'user', parts: [{ text: `Historique :\n${historique}\n\nDernière question : ${question}` }] }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+    prompt_routing: {
+      systeme: CONSIGNES_ROUTING,
+      message: `Historique :\n${historique}\n\nDernière question : ${question}`,
     },
   },
 }];

@@ -310,13 +310,17 @@ L'ingestion est **la même que la version hybride**, avec la même table `epicte
 
 Conversation et hors sujet passent par une **réponse directe**, sans recherche : c'est plus rapide et ça ne consomme pas d'appel en plus.
 
-Appels Gemini par question : **4** pour une question sur le livre (routing, embedding, reranking, generation), **1** pour une conversation ou une question hors sujet. Le modèle de chat est `models/gemini-flash-lite-latest`, le même pour les 3 appels LLM ; les embeddings utilisent `models/gemini-embedding-2`.
+Appels Gemini par question : **4** pour une question sur le livre (routing, embedding, reranking, generation), **1** pour une conversation ou une question hors sujet.
+
+**Nodes utilisés pour Gemini :**
+- **Routing, Reranking et Generation** → node **Google Gemini natif** (*Message a model*), modèle `models/gemini-flash-lite-latest`. Routing et Reranking ont l'option *Output Content as JSON* activée. *Simplify Output* est désactivé : le node renvoie alors la réponse brute `{ candidates: [...] }`, que lisent les nodes Code.
+- **Embeddings** (`models/gemini-embedding-2`) → **HTTP Request**. n8n n'a pas de node Gemini qui renvoie un vecteur : le node natif ne fait pas d'embeddings, et le sous-node *Embeddings Google Gemini* ne se branche que sur un vector store. Or ici, il faut le vecteur brut pour la requête SQL hybride.
 
 ### Mise en place
 1. **Supabase → SQL Editor** : exécuter [`supabase/setup_answering.sql`](supabase/setup_answering.sql), qui crée la table `epictete_conversations`. `setup_hybride.sql` doit déjà avoir été exécuté (c'est le cas si la version hybride marche).
 2. **n8n → Import from File** → `workflow_chatbot_epictete_answering.json`.
 3. Credentials :
-   - **Gemini** dans les 5 HTTP Request : *Embedding des chunks*, *3. Routing*, *4. Search : embedding*, *5. Reranking*, *6. Generation* ;
+   - **Gemini** dans les 3 nodes **Google Gemini** (*3. Routing*, *5. Reranking*, *6. Generation*) et les 2 HTTP Request d'embedding (*Embedding des chunks*, *4. Search : embedding*). C'est le même credential partout ;
    - **Postgres** dans les 4 nodes SQL : *Enregistrer dans Supabase*, *2. Context : historique*, *4. Search : recherche hybride*, *7. Sauvegarder l'échange*.
 4. **Ctrl+S**. Pas besoin de publier pour le chat : il n'y a plus d'outil d'agent.
 5. **Si la table `epictete_chunks` est déjà remplie** (version hybride), rien à réindexer : on peut ouvrir le chat directement. Sinon : bouton orange **« Execute workflow »** du Formulaire → PDF.
@@ -331,14 +335,14 @@ Appels Gemini par question : **4** pour une question sur le livre (routing, embe
 ### Si ça coince
 | Situation | Ce qui se passe / que faire |
 |---|---|
-| Quota Gemini dépassé (429) ou Gemini surchargé (503) | Chaque appel du chat **réessaie 3 fois, à 5 s d'intervalle**. Si ça échoue encore, le chat affiche l'erreur et l'échange n'est pas enregistré : attendre une minute et reposer la question |
+| Quota Gemini dépassé (429) ou Gemini surchargé (503) | Chaque appel Gemini du chat (3 nodes Gemini + l'embedding) **réessaie 3 fois, à 5 s d'intervalle**. Si ça échoue encore, le chat affiche l'erreur et l'échange n'est pas enregistré : attendre une minute et reposer la question |
 | Gemini renvoie une notation de reranking mal formée | Les notes illisibles sont ignorées ; s'il n'en reste aucune, on garde les 4 premiers de la recherche hybride |
 | Question dans une autre langue (espagnol…) | Le routing détecte la langue (code à 2 lettres) et la génération répond dans cette langue |
 | Table `epictete_chunks` vide | La recherche renvoie 0 candidat et le bot répond qu'il ne trouve pas. Le reranking est quand même appelé (1 appel inutile) : réindexer le livre |
 | L'historique grossit | `epictete_conversations` garde tout. Pour purger : `delete from epictete_conversations where created_at < now() - interval '30 days';` |
 
 ### Vérifié hors n8n (`tests/test_answering.mjs`)
-- **Structure** : ordre des 6 étapes, branche directe sans recherche, dernier node qui renvoie `{ output }`, même modèle d'embeddings que l'ingestion, ingestion identique à la version hybride.
+- **Structure** : ordre des 6 étapes, branche directe sans recherche, dernier node qui renvoie `{ output }`. Les 3 appels LLM passent par le node Google Gemini natif (JSON pour routing et reranking) ; les seuls HTTP restants sont les embeddings. Même modèle d'embeddings que l'ingestion, ingestion identique à la version hybride.
 - **Routing** : JSON valide, JSON entouré de ```` ```json ````, réponse illisible (repli sur « livre »), route inconnue, chapitre impossible.
 - **Reranking** : seuil ≥ 5, maximum 4, tri par note, chapitre demandé protégé, notation illisible, aucun passage pertinent.
 - **Conversations complètes** (vrai SQL + vrais nodes Code + Gemini simulé) :

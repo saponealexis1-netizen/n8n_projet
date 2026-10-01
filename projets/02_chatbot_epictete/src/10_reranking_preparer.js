@@ -13,10 +13,9 @@ const liste = candidats.map((c, i) => `[${i + 1}] (chapitre ${c.chapitre})\n${c.
 return [{
   json: {
     candidats,
-    corps_reranking: {
-      systemInstruction: { parts: [{ text: CONSIGNES_RERANKING }] },
-      contents: [{ role: 'user', parts: [{ text: `Question : ${r.question}\nRequête de recherche : ${r.requete}\n\nPassages :\n\n${liste || '(aucun)'}` }] }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+    prompt_reranking: {
+      systeme: CONSIGNES_RERANKING,
+      message: `Question : ${r.question}\nRequête de recherche : ${r.requete}\n\nPassages :\n\n${liste || '(aucun)'}`,
     },
   },
 }];

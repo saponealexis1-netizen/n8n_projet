@@ -1,5 +1,6 @@
 // 3. ROUTING : lit la décision du LLM et la sécurise (une réponse illisible ne doit jamais bloquer le chat)
 const ctx = $('2. Context : construire').first().json;
+// Sortie du node Google Gemini (simplify désactivé) : { candidates: [{ content: { parts: [{ text }] } }] }
 const brut = $input.first().json?.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? '';
 
 let d = {};
