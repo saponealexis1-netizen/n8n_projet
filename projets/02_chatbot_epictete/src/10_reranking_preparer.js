@@ -4,7 +4,9 @@ const candidats = $input.all().map(i => i.json).filter(c => c.content);
 
 const CONSIGNES_RERANKING = `Tu es le module de RERANKING d'un chatbot sur le Manuel d'Épictète.
 Pour chaque passage, note de 0 à 10 à quel point il aide à répondre à la question (10 = répond directement, 0 = sans rapport).
-Réponds UNIQUEMENT avec ce JSON : {"scores": [{"id": <numéro du passage>, "score": <0 à 10>}, ...]} en notant TOUS les passages.`;
+Réponds UNIQUEMENT avec ce JSON, en notant TOUS les passages :
+{"scores": [{"id": 1, "score": 8}, {"id": 2, "score": 0}, ...]}
+"id" = le numéro entre crochets du passage (pas le numéro de chapitre), "score" = un nombre de 0 à 10.`;
 
 const liste = candidats.map((c, i) => `[${i + 1}] (chapitre ${c.chapitre})\n${c.content}`).join('\n\n');
 

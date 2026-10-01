@@ -301,7 +301,7 @@ L'ingestion est **la même que la version hybride**, avec la même table `epicte
 | Étape | Rôle | Détail |
 |---|---|---|
 | **1. Input** | La question | Chat Trigger (`chatInput`, `sessionId`) |
-| **2. Context** | Se souvenir de la conversation | Les **3 derniers échanges** de la session, lus dans la table `epictete_conversations` |
+| **2. Context** | Se souvenir de la conversation | Les **3 derniers échanges** de la session, avec les **chapitres utilisés**, lus dans la table `epictete_conversations` |
 | **3. Routing** | Décider quoi faire | Gemini classe la question : **livre** / **conversation** (bonjour, merci) / **hors sujet**. Il la réécrit en **requête anglaise autonome** (« et le suivant ? » après le chapitre 8 → `Enchiridion – Chapter 9`) et détecte la langue. Si sa réponse est illisible, on cherche quand même dans le livre |
 | **4. Search** | Trouver des candidats | La recherche **hybride** (sens + mots-clés) renvoie **10 candidats** |
 | **5. Reranking** | Garder les bons | Gemini note chaque candidat de 0 à 10 par rapport à la question. On garde **au plus 4 passages notés ≥ 5**. Le chapitre explicitement demandé est toujours gardé. Si la notation est illisible, on garde les 4 premiers de la recherche |
@@ -328,6 +328,15 @@ Appels Gemini par question : **4** pour une question sur le livre (routing, embe
 
    Dans *Executions*, chaque étape montre ce qu'elle a décidé : la route, la requête réécrite, les 10 candidats, les notes du reranking, les passages gardés.
 
+### Si ça coince
+| Situation | Ce qui se passe / que faire |
+|---|---|
+| Quota Gemini dépassé (429) ou Gemini surchargé (503) | Chaque appel du chat **réessaie 3 fois, à 5 s d'intervalle**. Si ça échoue encore, le chat affiche l'erreur et l'échange n'est pas enregistré : attendre une minute et reposer la question |
+| Gemini renvoie une notation de reranking mal formée | Les notes illisibles sont ignorées ; s'il n'en reste aucune, on garde les 4 premiers de la recherche hybride |
+| Question dans une autre langue (espagnol…) | Le routing détecte la langue (code à 2 lettres) et la génération répond dans cette langue |
+| Table `epictete_chunks` vide | La recherche renvoie 0 candidat et le bot répond qu'il ne trouve pas. Le reranking est quand même appelé (1 appel inutile) : réindexer le livre |
+| L'historique grossit | `epictete_conversations` garde tout. Pour purger : `delete from epictete_conversations where created_at < now() - interval '30 days';` |
+
 ### Vérifié hors n8n (`tests/test_answering.mjs`)
 - **Structure** : ordre des 6 étapes, branche directe sans recherche, dernier node qui renvoie `{ output }`, même modèle d'embeddings que l'ingestion, ingestion identique à la version hybride.
 - **Routing** : JSON valide, JSON entouré de ```` ```json ````, réponse illisible (repli sur « livre »), route inconnue, chapitre impossible.
@@ -339,6 +348,21 @@ Appels Gemini par question : **4** pour une question sur le livre (routing, embe
   - échanges enregistrés, 3 derniers dans l'ordre ;
   - virgules et apostrophes intactes.
 - **Mutations** : 8 erreurs introduites exprès, toutes détectées. 2 trous dans les tests ont été trouvés puis corrigés.
+- **Revue hostile dans un vrai n8n 2.41.3** (sous-agent : Postgres + pgvector, faux Gemini programmable) : **aucun bloquant**. Ce qui marche réellement :
+  - le chat reçoit `output` dans les 2 branches ;
+  - textes piégés enregistrés intacts ;
+  - réponses Gemini bloquées ou vides gérées ;
+  - sessions séparées ;
+  - RLS ;
+  - pas besoin de publier.
+
+  7 améliorations appliquées et testées :
+  - notation de reranking mal formée qui effaçait tous les passages ;
+  - 3 essais sur les erreurs Gemini ;
+  - chapitres utilisés dans l'historique ;
+  - autres langues ;
+  - réponse par défaut neutre ;
+  - purge et coût documentés.
 
 ## Source
 

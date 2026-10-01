@@ -16,17 +16,20 @@ create table if not exists epictete_conversations (
   created_at  timestamptz not null default now()
 );
 create index if not exists epictete_conversations_session_idx on epictete_conversations (session_id, id desc);
+-- La table garde tout l'historique. Pour purger : delete from epictete_conversations where created_at < now() - interval '30 days';
 alter table epictete_conversations enable row level security;   -- inaccessible avec la clé anon
 
--- Les N derniers échanges d'une session, du plus ancien au plus récent
+-- Les N derniers échanges d'une session, du plus ancien au plus récent (avec les chapitres utilisés,
+-- pour résoudre « le chapitre suivant »). Drop : Postgres refuse de changer le type de retour avec "replace".
+drop function if exists epictete_historique(text, int);
 create or replace function epictete_historique(p_session text, p_nb int default 3)
-returns table (question text, reponse text)
+returns table (question text, reponse text, chapitres int[])
 language sql
 stable
 as $$
-  select question, reponse
+  select question, reponse, chapitres
   from (
-    select question, reponse, id
+    select question, reponse, chapitres, id
     from epictete_conversations
     where session_id = p_session
     order by id desc

@@ -335,8 +335,10 @@ ecrire('workflow_chatbot_epictete_hybride.json', {
 // est un node visible. Les 3 appels LLM passent par l'API Gemini generateContent (HTTP Request).
 // SQL en plus : supabase/setup_answering.sql (table epictete_conversations).
 const MODELE_CHAT = 'models/gemini-flash-lite-latest';  // modèle de chat validé dans n8n
+// Erreurs passagères de Gemini (429 quota, 503 surcharge) : 3 essais à 5 s d'intervalle
+const reessayer = n => ({ ...n, retryOnFail: true, maxTries: 3, waitBetweenTries: 5000 });
 const geminiGenerer = (name, position, corps) =>
-  httpGemini(name, position, `=${GEMINI}/${MODELE_CHAT}:generateContent`, `={{ JSON.stringify($json.${corps}) }}`);
+  reessayer(httpGemini(name, position, `=${GEMINI}/${MODELE_CHAT}:generateContent`, `={{ JSON.stringify($json.${corps}) }}`));
 const ROUTING = '3. Routing : lire la décision';
 const X = i => 220 * i;
 
@@ -364,8 +366,8 @@ const answeringNodes = [
     },
     options: {},
   }),
-  httpGemini('4. Search : embedding de la requête (Gemini)', [X(6), 600], `=${GEMINI}/${MODELE_EMBEDDING}:embedContent`,
-    `={{ JSON.stringify({ model: '${MODELE_EMBEDDING}', content: { parts: [{ text: $json.requete }] } }) }}`),
+  reessayer(httpGemini('4. Search : embedding de la requête (Gemini)', [X(6), 600], `=${GEMINI}/${MODELE_EMBEDDING}:embedContent`,
+    `={{ JSON.stringify({ model: '${MODELE_EMBEDDING}', content: { parts: [{ text: $json.requete }] } }) }}`)),
   postgres('4. Search : recherche hybride (SQL)', [X(7), 600],
     'select * from epictete_recherche_hybride($1, $2::vector, 10);',
     `={{ [ $('${ROUTING}').first().json.requete, '[' + $json.embedding.values.join(',') + ']' ] }}`,

@@ -133,6 +133,15 @@ Affirmations :
 - **R6** : conversation / hors sujet → réponse directe, **sans recherche** ni appel inutile. — Vérif : structure + node Code.
 - **R7** : chaque échange est enregistré (question, réponse, route, requête, chapitres utilisés) et le chat reçoit `{ output }`. — Vérif : SQL réel.
 
+Revue hostile (sous-agent, vrai n8n 2.41.3 + Postgres/pgvector + faux Gemini) : aucun bloquant. Corrigé et testé :
+- 🟠 une notation mal formée (`passage`/`note`, ids = n° de chapitre, « 8/10 ») effaçait tous les passages → seules les notes valides comptent, sinon repli sur les 4 premiers (R4) ;
+- 🟡 erreurs 429/503 → 3 essais à 5 s sur les 4 appels du chat ;
+- 🟡 l'historique contient les chapitres utilisés (R1) ;
+- 🟡 langue = code à 2 lettres, plus seulement fr/en (R5) ;
+- 🟡 réponse directe par défaut neutre.
+
+Documenté : reranking appelé même avec 0 candidat ; purge de `epictete_conversations`.
+
 ## Questions ouvertes
 - (aucune)
 

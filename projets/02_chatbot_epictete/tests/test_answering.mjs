@@ -51,6 +51,8 @@ ok(JSON.stringify(suivants('3. Routing : chercher dans le livre ?', 1)) === '["R
 ok(!wf.nodes.some(x => /agent|toolWorkflow|memoryBufferWindow|vectorStore/.test(x.type)), 'plus d\'agent, d\'outil ni de mémoire n8n : chaque étape est un node visible');
 ok(!wf.connections["7. Sauvegarder l'échange (SQL)"], 'la sauvegarde est le dernier node (le chat affiche son champ output)');
 const llm = ['3. Routing (Gemini)', '5. Reranking (Gemini)', '6. Generation (Gemini)'].map(n);
+ok(['3. Routing (Gemini)', '4. Search : embedding de la requête (Gemini)', '5. Reranking (Gemini)', '6. Generation (Gemini)'].map(n).every(x => x.retryOnFail === true && x.maxTries >= 3 && x.waitBetweenTries >= 5000),
+  'erreurs Gemini passagères (429, 503) : les 4 appels du chat réessaient 3 fois, à 5 s d\'intervalle');
 ok(llm.every(x => x.parameters.url.endsWith('models/gemini-flash-lite-latest:generateContent') && x.parameters.nodeCredentialType === 'googlePalmApi'),
   'les 3 appels LLM : generateContent sur gemini-flash-lite-latest, avec le credential Gemini existant');
 ok(/epictete_recherche_hybride\(\$1, \$2::vector, 10\)/.test(n('4. Search : recherche hybride (SQL)').parameters.query), 'R3 : la recherche hybride renvoie 10 candidats au reranking');
@@ -84,11 +86,23 @@ let g = garder(JSON.stringify({ scores: [{ id: 1, score: 3 }, { id: 2, score: 9 
 ok(JSON.stringify(g.chapitres) === '[4,2,6,3]', `R4 : garde au plus 4 passages notés ≥ 5, triés par note (${g.chapitres})`);
 g = garder(JSON.stringify({ scores: [{ id: 1, score: 9 }, { id: 8, score: 2 }] }), { ...routage, chapitre: 8 });
 ok(g.chapitres[0] === 8 && g.chapitres.includes(1), `R4 : le chapitre demandé (8) est gardé et placé en tête, même mal noté (${g.chapitres})`);
+// Revue hostile #1 : notation mal formée → ne doit jamais tout effacer
+for (const [cas, json] of [
+  ['clés passage/note', { scores: [{ passage: 1, note: 9 }, { passage: 2, note: 8 }] }],
+  ['ids inexistants (n° de chapitre 40, 41…)', { scores: [{ id: 40, score: 9 }, { id: 41, score: 8 }] }],
+  ['scores en texte « 8/10 »', { scores: [{ id: 2, score: '8/10' }, { id: 3, score: 'neuf' }] }],
+]) {
+  const r = garder(JSON.stringify(json));
+  ok(r.chapitres.length > 0, `R4 : notation mal formée (${cas}) → des passages sont gardés (${r.chapitres})`);
+}
+ok(JSON.stringify(garder(JSON.stringify({ scores: [{ id: 2, score: '8/10' }, { id: 3, score: 4 }] })).chapitres) === '[2]', 'R4 : « 8/10 » est lu comme 8');
 g = garder('pas du JSON');
 ok(JSON.stringify(g.chapitres) === '[1,2,3,4]', `R4 : notation illisible → les 4 premiers de la recherche hybride (${g.chapitres})`);
 g = garder(JSON.stringify({ scores: [{ id: 1, score: 1 }, { id: 2, score: 0 }] }));
 ok(g.chapitres.length === 0 && /aucun passage pertinent/.test(g.corps_generation.contents[0].parts[0].text), 'R5 : aucun passage pertinent → la génération le sait (et doit dire qu\'elle ne trouve pas)');
 ok(/Réponds en anglais/.test(garder('{}', { ...routage, langue: 'en' }).corps_generation.systemInstruction.parts[0].text), 'R5 : la génération répond dans la langue de la question');
+ok(/Réponds dans cette langue : es/.test(garder('{}', { ...routage, langue: 'es' }).corps_generation.systemInstruction.parts[0].text), 'R5 : une question en espagnol → réponse demandée en espagnol (es)');
+ok(lire('{"route":"livre","requete":"x","langue":"es"}').langue === 'es' && lire('{"route":"livre","requete":"x","langue":"pirate"}').langue === 'fr', 'R2 : langue = code à 2 lettres, sinon français');
 const vide = run('6. Generation : réponse', [{ candidates: [] }], { '3. Routing : lire la décision': [{ ...routage, langue: 'en' }], '5. Reranking : garder les meilleurs': [{ chapitres: [] }] })[0];
 ok(/couldn't generate/.test(vide.reponse), 'réponse Gemini vide → message d\'excuse au lieu d\'une bulle vide');
 
@@ -152,12 +166,16 @@ ok(/Utilisateur : Qu'est-ce qui dépend de nous \?/.test(t2.contexte.corps_routi
 ok(t2.candidats?.[0]?.chapitre === 2 && t2.choix?.chapitres[0] === 2, 'R2-R4 : « Chapter 2 » → chapitre 2 en tête de la recherche et gardé malgré une note de 3');
 
 const t3 = await conversation('A', 'Merci beaucoup !', { routing: '{"route":"conversation","requete":"","chapitre":null,"langue":"fr","reponse_directe":"Avec plaisir !"}' });
+ok(/\[chapitres utilisés : 2\]/.test((await conversation('A', 'Et après ?', { routing: '{"route":"conversation","requete":"","langue":"fr","reponse_directe":"ok"}' })).contexte.historique),
+  'R1 : l\'historique indique les chapitres utilisés (« le chapitre suivant » résoluble même si la réponse ne cite pas de numéro)');
+const t3b = await conversation('E', 'Merci !', { routing: '{"route":"conversation","requete":"","langue":"fr","reponse_directe":""}' });
+ok(!/^Bonjour/.test(t3b.sortie[0].output), `réponse directe par défaut neutre, pas « Bonjour » après un merci (« ${t3b.sortie[0].output} »)`);
 ok(!t3.candidats && t3.sortie[0].output === 'Avec plaisir !', 'R6 : « merci » → réponse directe, aucune recherche');
 const t4 = await conversation('B', 'Quelle est la capitale du Japon ?', { routing: '{"route":"hors_sujet","requete":"","chapitre":null,"langue":"fr","reponse_directe":""}' });
 ok(!t4.candidats && /ne réponds qu'aux questions sur le Manuel/.test(t4.sortie[0].output), 'R6 : hors sujet → refus poli par défaut, aucune recherche');
 
 const enregistre = (await db.query("select route, requete, chapitres from epictete_conversations where session_id = 'A' order by id")).rows;
-ok(enregistre.length === 3 && enregistre[0].chapitres.join() === '1' && enregistre[1].requete === 'Enchiridion – Chapter 2' && enregistre[2].route === 'conversation',
+ok(enregistre.length === 4 && enregistre[0].chapitres.join() === '1' && enregistre[1].requete === 'Enchiridion – Chapter 2' && enregistre[2].route === 'conversation',
   'R7 : chaque échange est enregistré avec sa route, sa requête et ses chapitres');
 for (let i = 1; i <= 5; i++) await db.query("select * from epictete_sauvegarder_echange('C', $1, $2, 'livre', 'x', '{}'::int[])", [`q${i}`, `r${i}`]);
 const h = await sqlNode('2. Context : historique (SQL)', ['C']);
