@@ -5,6 +5,8 @@
 //   -> workflow_chatbot_epictete_hybride.json   (Supabase + recherche hybride vecteurs + mots-clés,
 //                                                sur le modèle du flow du prof : Limit + sous-workflow
 //                                                + embeddings en HTTP Request + SQL)
+//   -> workflow_chatbot_epictete_answering.json (même ingestion que l'hybride ; chat en pipeline explicite :
+//                                                Input → Context → Routing → Search → Reranking → Generation)
 //
 // Types et versions des nodes vérifiés dans les définitions officielles
 // (@n8n/n8n-nodes-langchain 2.41.3 et n8n-nodes-base 2.41.3, dossier dist/node-definitions).
@@ -326,4 +328,87 @@ ecrire('workflow_chatbot_epictete_hybride.json', {
   name: "Chatbot RAG - Manuel d'Épictète (recherche hybride)",
   nodes: hybrideNodes,
   connections: hybrideConnections,
+});
+
+// ---------- Variante ANSWERING : Input → Context → Routing → Search → Reranking → Generation ----------
+// Même ingestion que l'hybride (même table epictete_chunks). Le chat n'a plus d'agent : chaque étape
+// est un node visible. Les 3 appels LLM passent par l'API Gemini generateContent (HTTP Request).
+// SQL en plus : supabase/setup_answering.sql (table epictete_conversations).
+const MODELE_CHAT = 'models/gemini-flash-lite-latest';  // modèle de chat validé dans n8n
+const geminiGenerer = (name, position, corps) =>
+  httpGemini(name, position, `=${GEMINI}/${MODELE_CHAT}:generateContent`, `={{ JSON.stringify($json.${corps}) }}`);
+const ROUTING = '3. Routing : lire la décision';
+const X = i => 220 * i;
+
+const ingestion = hybrideNodes.filter(n => [
+  'Formulaire : envoyer le livre (PDF)', 'Extraire le texte du PDF', 'Nettoyage', 'Chunking', 'Augmentation', 'Mots-clés', 'Limit',
+  'Vectoriser (sous-workflow)', TRIGGER_SOUS_WF, 'Préparer les embeddings', 'Embedding des chunks (Gemini)', 'Préparer les lignes',
+  'Enregistrer dans Supabase (SQL)',
+].includes(n.name)).map(n => n.name === TRIGGER_SOUS_WF ? { ...n, name: 'Sous-workflow : indexer' } : n);
+
+const answeringNodes = [
+  ...ingestion,
+  { ...nodes.find(n => n.name === 'Chat : question sur le livre'), name: '1. Input (chat)', position: [0, 700] },
+  postgres('2. Context : historique (SQL)', [X(1), 700],
+    'select * from epictete_historique($1, 3);',
+    '={{ [ $json.sessionId ] }}',
+    { alwaysOutputData: true }),  // nouvelle conversation → 0 ligne → 1 item vide
+  node('2. Context : construire', 'n8n-nodes-base.code', 2, [X(2), 700], { jsCode: code('8_contexte.js') }),
+  geminiGenerer('3. Routing (Gemini)', [X(3), 700], 'corps_routing'),
+  node(ROUTING, 'n8n-nodes-base.code', 2, [X(4), 700], { jsCode: code('9_routing.js') }),
+  node('3. Routing : chercher dans le livre ?', 'n8n-nodes-base.if', 2.2, [X(5), 700], {
+    conditions: {
+      options: { caseSensitive: true, leftValue: '', typeValidation: 'loose', version: 2 },
+      conditions: [{ id: id('condition-livre'), leftValue: '={{ $json.route }}', rightValue: 'livre', operator: { type: 'string', operation: 'equals' } }],
+      combinator: 'and',
+    },
+    options: {},
+  }),
+  httpGemini('4. Search : embedding de la requête (Gemini)', [X(6), 600], `=${GEMINI}/${MODELE_EMBEDDING}:embedContent`,
+    `={{ JSON.stringify({ model: '${MODELE_EMBEDDING}', content: { parts: [{ text: $json.requete }] } }) }}`),
+  postgres('4. Search : recherche hybride (SQL)', [X(7), 600],
+    'select * from epictete_recherche_hybride($1, $2::vector, 10);',
+    `={{ [ $('${ROUTING}').first().json.requete, '[' + $json.embedding.values.join(',') + ']' ] }}`,
+    { alwaysOutputData: true }),
+  node('5. Reranking : préparer', 'n8n-nodes-base.code', 2, [X(8), 600], { jsCode: code('10_reranking_preparer.js') }),
+  geminiGenerer('5. Reranking (Gemini)', [X(9), 600], 'corps_reranking'),
+  node('5. Reranking : garder les meilleurs', 'n8n-nodes-base.code', 2, [X(10), 600], { jsCode: code('11_reranking_selection.js') }),
+  geminiGenerer('6. Generation (Gemini)', [X(11), 600], 'corps_generation'),
+  node('6. Generation : réponse', 'n8n-nodes-base.code', 2, [X(12), 600], { jsCode: code('12_generation_reponse.js') }),
+  node('Réponse directe (sans recherche)', 'n8n-nodes-base.code', 2, [X(9), 820], { jsCode: code('13_reponse_directe.js') }),
+  // Dernier node : enregistre l'échange (Context de la prochaine question) et renvoie { output } au chat
+  postgres("7. Sauvegarder l'échange (SQL)", [X(13), 700],
+    'select * from epictete_sauvegarder_echange($1, $2, $3, $4, $5, $6::int[]);',
+    "={{ [ $json.sessionId, $json.question, $json.reponse, $json.route, $json.requete, '{' + $json.chapitres.join(',') + '}' ] }}"),
+];
+
+const answeringConnections = {
+  ...Object.fromEntries(Object.entries(hybrideConnections).filter(([k]) =>
+    ['Formulaire : envoyer le livre (PDF)', 'Extraire le texte du PDF', 'Nettoyage', 'Chunking', 'Augmentation', 'Mots-clés', 'Limit',
+      'Préparer les embeddings', 'Embedding des chunks (Gemini)', 'Préparer les lignes'].includes(k))),
+  'Sous-workflow : indexer': main('Préparer les embeddings'),
+  '1. Input (chat)': main('2. Context : historique (SQL)'),
+  '2. Context : historique (SQL)': main('2. Context : construire'),
+  '2. Context : construire': main('3. Routing (Gemini)'),
+  '3. Routing (Gemini)': main(ROUTING),
+  [ROUTING]: main('3. Routing : chercher dans le livre ?'),
+  '3. Routing : chercher dans le livre ?': { main: [
+    [{ node: '4. Search : embedding de la requête (Gemini)', type: 'main', index: 0 }],
+    [{ node: 'Réponse directe (sans recherche)', type: 'main', index: 0 }],
+  ] },
+  '4. Search : embedding de la requête (Gemini)': main('4. Search : recherche hybride (SQL)'),
+  '4. Search : recherche hybride (SQL)': main('5. Reranking : préparer'),
+  '5. Reranking : préparer': main('5. Reranking (Gemini)'),
+  '5. Reranking (Gemini)': main('5. Reranking : garder les meilleurs'),
+  '5. Reranking : garder les meilleurs': main('6. Generation (Gemini)'),
+  '6. Generation (Gemini)': main('6. Generation : réponse'),
+  '6. Generation : réponse': main("7. Sauvegarder l'échange (SQL)"),
+  'Réponse directe (sans recherche)': main("7. Sauvegarder l'échange (SQL)"),
+};
+
+ecrire('workflow_chatbot_epictete_answering.json', {
+  ...workflow,
+  name: "Chatbot RAG - Manuel d'Épictète (answering : routing + reranking)",
+  nodes: answeringNodes,
+  connections: answeringConnections,
 });

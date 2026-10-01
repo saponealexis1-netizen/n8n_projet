@@ -2,13 +2,14 @@
 
 Chatbot n8n qui répond aux questions sur **le Manuel d'Épictète** (*The Enchiridion*, trad. Elizabeth Carter, 52 chapitres), **uniquement à partir du livre**, en citant les chapitres. Il répond dans la langue de la question et refuse ce qui n'est pas dans le livre.
 
-✅ **Validé dans n8n**, dans les 3 versions : ingestion des 56 chunks et réponses du chat.
+✅ **Validé dans n8n** : Simple Vector Store, Supabase et hybride (ingestion des 56 chunks et réponses du chat). La version answering est à valider.
 
 | Version | Base vectorielle | Persistance | Fichier |
 |---|---|---|---|
 | Simple Vector Store | En mémoire dans n8n | Perdue au redémarrage de n8n | `workflow_chatbot_epictete.json` |
 | **Supabase** | Table Postgres + pgvector | Permanente, visible dans Supabase | `workflow_chatbot_epictete_supabase.json` |
 | **Hybride** | Supabase + recherche **vecteurs + mots-clés** | Permanente | `workflow_chatbot_epictete_hybride.json` |
+| **Answering** (à valider dans n8n) | Hybride + pipeline de réponse **Context → Routing → Search → Reranking → Generation** | Permanente (+ historique des conversations) | `workflow_chatbot_epictete_answering.json` |
 
 - Spec : [`specs/2026-09-30-chatbot-epictete-rag.md`](../../specs/2026-09-30-chatbot-epictete-rag.md)
 - Workflow à importer : [`workflow_chatbot_epictete.json`](workflow_chatbot_epictete.json)
@@ -105,13 +106,17 @@ Cliquer sur **Open chat**, puis par exemple :
 | `supabase/setup.sql` | Script SQL à exécuter une fois dans Supabase (version Supabase) |
 | `workflow_chatbot_epictete_hybride.json` | **Version hybride** (générée par le même script) |
 | `supabase/setup_hybride.sql` | Script SQL de la version hybride (table `epictete_chunks`, réindexation, recherche hybride) |
+| `workflow_chatbot_epictete_answering.json` | **Version answering** (générée par le même script) |
+| `supabase/setup_answering.sql` | Script SQL de la version answering (table `epictete_conversations`) |
+| `src/8_contexte.js` … `13_reponse_directe.js` | Code des nodes Code du pipeline d'answering (prompts inclus) |
 | `src/4_mots_cles.js` … `7_formater_passages.js` | Code des nodes Code de la version hybride |
 | `src/1_nettoyage.js`, `2_chunking.js`, `3_augmentation.js` | Code des 3 nodes Code |
-| `scripts/build-workflow.mjs` | Régénère les 3 JSON à partir de `src/` |
+| `scripts/build-workflow.mjs` | Régénère les 4 JSON à partir de `src/` |
 | `scripts/decouper.mjs` | Régénère le texte de référence `data/enchiridion.json` / `.csv` |
 | `tests/test.mjs` | Tests automatiques (structure, nettoyage, chunking, augmentation, cas d'erreur) |
 | `tests/test_supabase.mjs` | Tests de la version Supabase (structure + SQL exécuté sur Postgres/pgvector) |
 | `tests/test_hybride.mjs` | Tests de la version hybride (structure, nodes Code, SQL hybride) |
+| `tests/test_answering.mjs` | Tests de la version answering (structure, routing, reranking, conversations complètes) |
 | `tests/extraire_comme_n8n.mjs` | Extrait un PDF exactement comme n8n (pdf.js 5.4.296 + même `parseText`) |
 | `tests/fixtures/` | Textes extraits de PDF de test : livre, version navigateur avec menus/en-têtes, mise en page étroite, autre livre, vide, tronqué, chapitre manquant… |
 | `data/enchiridion.pdf` | Le livre à envoyer dans le formulaire |
@@ -275,6 +280,65 @@ Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 r
 - **SQL exécuté sur Postgres 18 + pgvector** : réindexation atomique (une erreur laisse les 56 anciennes lignes) ; mot exact rare retrouvé ; question sans mot du livre servie par le sens ; fusion RRF ; mots combinés en OU ; « Socrate » trouve « Socrates » ; « Chapter N » / « chapitre N » met le chapitre en tête (12 cas).
 - **Revue hostile dans un vrai n8n 2.41.3** (sous-agent : Postgres + pgvector, faux Gemini) : l'auto-appel, l'aiguillage, le HTTP avec le credential Gemini, les paramètres SQL de 1,7 Mo et le retour vers l'agent fonctionnent. Ses 3 problèmes sont corrigés ou documentés ci-dessus (publication obligatoire, recherche par chapitre, Limit à 3).
 - **Mutations** : 8 erreurs introduites exprès, toutes détectées.
+
+## Version answering (Context → Routing → Search → Reranking → Generation)
+
+Fichier : [`workflow_chatbot_epictete_answering.json`](workflow_chatbot_epictete_answering.json) · SQL : [`supabase/setup_answering.sql`](supabase/setup_answering.sql), en plus de `setup_hybride.sql`.
+
+L'ingestion est **la même que la version hybride**, avec la même table `epictete_chunks`. Seul le chat change : plus d'agent qui décide tout seul, chaque étape de la réponse est un **node visible**.
+
+```
+1. Input (chat)
+ → 2. Context   : historique (SQL) → construire
+ → 3. Routing   : Gemini → lire la décision → chercher dans le livre ?
+       ├─ oui → 4. Search    : embedding de la requête (Gemini) → recherche hybride (SQL, 10 candidats)
+       │        5. Reranking : préparer → Gemini (note 0-10) → garder les meilleurs (≤ 4)
+       │        6. Generation: Gemini → réponse
+       └─ non → Réponse directe (sans recherche)
+ → 7. Sauvegarder l'échange (SQL) → renvoie { output } au chat
+```
+
+| Étape | Rôle | Détail |
+|---|---|---|
+| **1. Input** | La question | Chat Trigger (`chatInput`, `sessionId`) |
+| **2. Context** | Se souvenir de la conversation | Les **3 derniers échanges** de la session, lus dans la table `epictete_conversations` |
+| **3. Routing** | Décider quoi faire | Gemini classe la question : **livre** / **conversation** (bonjour, merci) / **hors sujet**. Il la réécrit en **requête anglaise autonome** (« et le suivant ? » après le chapitre 8 → `Enchiridion – Chapter 9`) et détecte la langue. Si sa réponse est illisible, on cherche quand même dans le livre |
+| **4. Search** | Trouver des candidats | La recherche **hybride** (sens + mots-clés) renvoie **10 candidats** |
+| **5. Reranking** | Garder les bons | Gemini note chaque candidat de 0 à 10 par rapport à la question. On garde **au plus 4 passages notés ≥ 5**. Le chapitre explicitement demandé est toujours gardé. Si la notation est illisible, on garde les 4 premiers de la recherche |
+| **6. Generation** | Répondre | Gemini répond **uniquement** à partir des passages gardés, dans la langue de la question, en citant les chapitres. Sans passage pertinent : « je ne trouve pas » |
+| **7. Sauvegarde** | Contexte de la prochaine question | Question, réponse, route, requête et chapitres utilisés sont enregistrés ; le chat affiche la réponse |
+
+Conversation et hors sujet passent par une **réponse directe**, sans recherche : c'est plus rapide et ça ne consomme pas d'appel en plus.
+
+Appels Gemini par question : **4** pour une question sur le livre (routing, embedding, reranking, generation), **1** pour une conversation ou une question hors sujet. Le modèle de chat est `models/gemini-flash-lite-latest`, le même pour les 3 appels LLM ; les embeddings utilisent `models/gemini-embedding-2`.
+
+### Mise en place
+1. **Supabase → SQL Editor** : exécuter [`supabase/setup_answering.sql`](supabase/setup_answering.sql), qui crée la table `epictete_conversations`. `setup_hybride.sql` doit déjà avoir été exécuté (c'est le cas si la version hybride marche).
+2. **n8n → Import from File** → `workflow_chatbot_epictete_answering.json`.
+3. Credentials :
+   - **Gemini** dans les 5 HTTP Request : *Embedding des chunks*, *3. Routing*, *4. Search : embedding*, *5. Reranking*, *6. Generation* ;
+   - **Postgres** dans les 4 nodes SQL : *Enregistrer dans Supabase*, *2. Context : historique*, *4. Search : recherche hybride*, *7. Sauvegarder l'échange*.
+4. **Ctrl+S**. Pas besoin de publier pour le chat : il n'y a plus d'outil d'agent.
+5. **Si la table `epictete_chunks` est déjà remplie** (version hybride), rien à réindexer : on peut ouvrir le chat directement. Sinon : bouton orange **« Execute workflow »** du Formulaire → PDF.
+6. **Open chat**, puis :
+   - « Qu'est-ce qui dépend de nous ? » ;
+   - « Et le chapitre suivant ? », pour tester le Context et le Routing ;
+   - « Merci ! », qui donne une réponse directe ;
+   - « Quelle est la capitale du Japon ? », hors sujet.
+
+   Dans *Executions*, chaque étape montre ce qu'elle a décidé : la route, la requête réécrite, les 10 candidats, les notes du reranking, les passages gardés.
+
+### Vérifié hors n8n (`tests/test_answering.mjs`)
+- **Structure** : ordre des 6 étapes, branche directe sans recherche, dernier node qui renvoie `{ output }`, même modèle d'embeddings que l'ingestion, ingestion identique à la version hybride.
+- **Routing** : JSON valide, JSON entouré de ```` ```json ````, réponse illisible (repli sur « livre »), route inconnue, chapitre impossible.
+- **Reranking** : seuil ≥ 5, maximum 4, tri par note, chapitre demandé protégé, notation illisible, aucun passage pertinent.
+- **Conversations complètes** (vrai SQL + vrais nodes Code + Gemini simulé) :
+  - nouvelle session sans historique ;
+  - « Et le chapitre suivant ? » qui reçoit l'échange précédent ;
+  - « Merci » et hors sujet, sans recherche ;
+  - échanges enregistrés, 3 derniers dans l'ordre ;
+  - virgules et apostrophes intactes.
+- **Mutations** : 8 erreurs introduites exprès, toutes détectées. 2 trous dans les tests ont été trouvés puis corrigés.
 
 ## Source
 

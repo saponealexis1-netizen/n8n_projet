@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node projets/02_chatbot_epictete/tests/test.mjs && node projets/02_chatbot_epictete/tests/test_supabase.mjs && node projets/02_chatbot_epictete/tests/test_hybride.mjs",
+    "test": "node projets/02_chatbot_epictete/tests/test.mjs && node projets/02_chatbot_epictete/tests/test_supabase.mjs && node projets/02_chatbot_epictete/tests/test_hybride.mjs && node projets/02_chatbot_epictete/tests/test_answering.mjs",
     "build:chatbot": "node projets/02_chatbot_epictete/scripts/build-workflow.mjs"
   },
   "devDependencies": {

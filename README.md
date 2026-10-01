@@ -7,7 +7,7 @@ Projets d'automatisation **n8n**, construits avec Claude Code et 3 skills maison
 | # | Projet | Description | Statut |
 |---|---|---|---|
 | 01 | [🏇 Récap Top 5 courses du week-end (PMU)](projets/01_pmu_recap_weekend/) | Chaque lundi 9h30, récupère les courses françaises du week-end (API PMU), sélectionne le top 5 par allocation et envoie un mail personnalisé selon le segment client (actif / inactif) | Démo |
-| 02 | [📖 Chatbot RAG - Manuel d'Épictète](projets/02_chatbot_epictete/) | Chatbot qui répond aux questions sur le Manuel d'Épictète uniquement à partir du livre, en citant les chapitres. Ingestion RAG complète : extraction → nettoyage → chunking → augmentation → vectorisation. Trois versions : Simple Vector Store, **Supabase**, et **recherche hybride** (vecteurs + mots-clés, sur le modèle du flow du prof) | ✅ Validé dans n8n (les 3 versions) |
+| 02 | [📖 Chatbot RAG - Manuel d'Épictète](projets/02_chatbot_epictete/) | Chatbot qui répond aux questions sur le Manuel d'Épictète uniquement à partir du livre, en citant les chapitres. Ingestion RAG complète : extraction → nettoyage → chunking → augmentation → vectorisation. Quatre versions : Simple Vector Store, **Supabase**, **recherche hybride** (vecteurs + mots-clés, sur le modèle du flow du prof) et **answering** (Context → Routing → Search → Reranking → Generation) | ✅ Validé dans n8n (3 versions) · answering à valider |
 
 Chaque projet a son propre README : installation dans n8n, fonctionnement, limites connues.
 
@@ -32,8 +32,10 @@ n8n_projet/
 │       ├── workflow_chatbot_epictete.json           ← à importer (Simple Vector Store)
 │       ├── workflow_chatbot_epictete_supabase.json  ← à importer (Supabase)
 │       ├── workflow_chatbot_epictete_hybride.json   ← à importer (Supabase + recherche hybride)
+│       ├── workflow_chatbot_epictete_answering.json ← à importer (hybride + Context → Routing → Search → Reranking → Generation)
 │       ├── supabase/setup.sql                       ← à exécuter une fois dans Supabase (table epictete_documents)
 │       ├── supabase/setup_hybride.sql               ← idem pour la version hybride (table epictete_chunks)
+│       ├── supabase/setup_answering.sql             ← en plus, pour la version answering (table epictete_conversations)
 │       ├── data/                            ← le livre (PDF + texte de référence)
 │       ├── src/                             ← code des nodes Code
 │       ├── scripts/                         ← génération du workflow
@@ -59,7 +61,7 @@ Exemple concret : le [chatbot Épictète](projets/02_chatbot_epictete/#comment-i
 
 ```bash
 npm install
-npm test                 # tests du chatbot Épictète (Simple Vector Store, Supabase, hybride)
+npm test                 # tests du chatbot Épictète (les 4 versions)
 ```
 
 Pour exécuter un node Code d'un workflow hors de n8n :

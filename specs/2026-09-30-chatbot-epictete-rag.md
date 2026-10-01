@@ -113,6 +113,26 @@ Revue hostile (sous-agent, **vrai n8n 2.41.3** + Postgres/pgvector + faux Gemini
 - 🟠 « Chapter N » mal servi (en-tête indexé dans les 56 chunks) → corrigé (en-tête hors de l'index plein texte + priorité au chapitre demandé, H7) ;
 - 🟡 le Limit à 3 vide l'index → documenté ; réindexations simultanées → verrou SQL ; `score` casté explicitement en `float` (Supabase PG 15/17).
 
+## Évolution : pipeline d'answering (2026-10-01)
+
+Demande du prof : rendre la réponse explicite, étape par étape : **Input → Context → Routing → Search → Reranking → Generation**.
+
+Choix validés : **nouveau workflow** `workflow_chatbot_epictete_answering.json` (l'hybride validé reste intact ; même ingestion, même table `epictete_chunks`) ; **contexte dans une table Supabase** `epictete_conversations` ; **reranking par Gemini** (pas de nouvelle clé).
+
+Choix techniques (vérifiés) :
+- plus d'agent ni d'outil : chaque étape est un node visible. Le chat ne dépend donc plus de la publication du workflow (l'ingestion par sous-workflow fonctionne en brouillon) ;
+- les 3 appels LLM (routing, reranking, generation) sont des HTTP Request `generateContent` vers `models/gemini-flash-lite-latest` (modèle validé), avec le credential Gemini existant. Routing et reranking répondent en JSON (`responseMimeType`), à température 0 ;
+- le Chat Trigger (mode `lastNode`) affiche le champ `output` du dernier node : c'est la fonction SQL `epictete_sauvegarder_echange`, qui enregistre l'échange et renvoie `{ output }`.
+
+Affirmations :
+- **R1 (Context)** : les 3 derniers échanges de la session sont relus dans l'ordre chronologique ; une nouvelle session n'a pas d'historique. — Vérif : SQL réel.
+- **R2 (Routing)** : la question est classée `livre` / `conversation` / `hors_sujet` et réécrite en requête anglaise autonome (les références comme « le chapitre suivant » sont résolues grâce au contexte) ; une réponse illisible du LLM retombe sur `livre` avec la question brute (jamais de crash). — Vérif : node Code + réponses simulées.
+- **R3 (Search)** : 10 candidats par la recherche hybride existante. — Vérif : requête du node.
+- **R4 (Reranking)** : on garde au plus 4 passages notés ≥ 5/10, triés par note ; le chapitre explicitement demandé est toujours gardé ; si la notation est illisible, on garde les 4 premiers de la recherche hybride. — Vérif : node Code.
+- **R5 (Generation)** : la réponse s'appuie uniquement sur les passages gardés et cite les chapitres ; sans passage pertinent, elle dit qu'elle ne trouve pas (dans la langue de la question). — Vérif : prompt testé + test manuel.
+- **R6** : conversation / hors sujet → réponse directe, **sans recherche** ni appel inutile. — Vérif : structure + node Code.
+- **R7** : chaque échange est enregistré (question, réponse, route, requête, chapitres utilisés) et le chat reçoit `{ output }`. — Vérif : SQL réel.
+
 ## Questions ouvertes
 - (aucune)
 

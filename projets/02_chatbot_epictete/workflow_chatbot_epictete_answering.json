@@ -1,0 +1,765 @@
+{
+  "name": "Chatbot RAG - Manuel d'Épictète (answering : routing + reranking)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Chatbot Épictète : charger le livre",
+        "formDescription": "Envoie le PDF du Manuel d'Épictète (The Enchiridion, trad. E. Carter). Il sera nettoyé, découpé et indexé ; les indexations précédentes sont remplacées.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Livre PDF",
+              "fieldType": "file",
+              "acceptFileTypes": ".pdf",
+              "multipleFiles": false,
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "appendAttribution": false,
+          "buttonLabel": "Indexer le livre",
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "Livre indexé ✅ Tu peux maintenant poser tes questions dans le chat."
+            }
+          }
+        }
+      },
+      "id": "f56defa4-0b12-88e0-8d84-b88114c26b23",
+      "name": "Formulaire : envoyer le livre (PDF)",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Livre_PDF",
+        "options": {}
+      },
+      "id": "b4969619-7fd2-9543-cbe0-1d496442c90f",
+      "name": "Extraire le texte du PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NETTOYAGE du texte extrait du PDF\n// Entrée : 1 item { text, numpages } (sortie de \"Extraire le texte du PDF\")\n// Sortie : 1 item { texte } avec un chapitre par ligne (\"1. ...\", \"2. ...\")\nconst { text = '', numpages = 1 } = $input.first().json;\nif (!text.trim()) {\n  throw new Error(\"Aucun texte extrait du PDF (PDF vide ou scanné) : rien n'a été indexé.\");\n}\n\n// Les pages sont séparées par une ligne vide (extraction n8n)\nconst pages = text.replace(/\\r/g, '').split('\\n\\n')\n  .map(p => p.split('\\n').map(l => l.replace(/\\s+/g, ' ').trim()).filter(Boolean));\n\n// 1. En-têtes / pieds de page du navigateur : lignes qui reviennent au BORD de plusieurs pages\n//    (3 premières / 3 dernières lignes ; chiffres ignorés pour attraper \"1/10\", \"2/10\", la date…).\n//    On ne regarde que les bords pour ne jamais supprimer une ligne du livre qui se répète.\nconst cle = l => l.replace(/\\d+/g, '#');\nconst bords = pages.flatMap(p => [...new Set([...p.slice(0, 3), ...p.slice(-3)])]);\nconst freq = {};\nfor (const l of bords) freq[cle(l)] = (freq[cle(l)] ?? 0) + 1;\nconst estEnTete = (l, i, page) => (i < 3 || i >= page.length - 3) && numpages >= 3 && freq[cle(l)] >= 3 && l.length < 200;\nconst estParasite = l =>\n  /^(https?|file):\\/\\//i.test(l) ||                  // URL\n  /^(page\\s*)?\\d+\\s*(\\/|of|sur)\\s*\\d+$/i.test(l) ||  // \"3/10\", \"Page 3 of 10\"\n  /^\\d+$/.test(l);                                   // numéro de page seul\nlet lignes = pages.flatMap(p => p.filter((l, i) => !estEnTete(l, i, p) && !estParasite(l)));\n\n// 2. Garder uniquement le livre : du chapitre 1 jusqu'à \"THE END\" (menu du site, ©, etc. supprimés)\nconst debut = lignes.findIndex(l => /^1\\.( |$)/.test(l));\nif (debut === -1) {\n  throw new Error(\"Chapitre 1 introuvable : ce PDF n'est pas le Manuel d'Épictète (rien n'a été indexé).\");\n}\nconst fin = lignes.findIndex((l, i) => i > debut && /^THE END$/i.test(l));\nlignes = lignes.slice(debut, fin === -1 ? undefined : fin);\n\n// 3. Recoller les lignes coupées : mots coupés par un tiret, puis une ligne par chapitre\nconst texte = lignes.join('\\n')\n  .replace(/([a-z])-\\n([a-z])/g, '$1-$2')  // \"self-\\nrestraint\" -> \"self-restraint\" (tiret gardé)\n  .replace(/\\n(?!\\d+\\.(?: |\\n|$))/g, ' ') // retour à la ligne hors début de chapitre -> espace\n  .replace(/^(\\d+)\\.(?=\\S)/gm, '$1. ')      // \"12.\" seul sur sa ligne -> \"12. \" + texte\n  .replace(/ {2,}/g, ' ')\n  .trim();\n\nreturn [{ json: { texte, nb_caracteres: texte.length, nb_pages: numpages } }];\n"
+      },
+      "id": "01010a10-8661-d763-ef5e-1dc4b044d95b",
+      "name": "Nettoyage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CHUNKING : 1 chunk par chapitre, les chapitres trop longs sont redécoupés par groupes de phrases\n// (le PDF ne conserve pas les paragraphes, on coupe donc entre deux phrases)\nconst NB_CHAPITRES = 52;  // traduction E. Carter (version MIT)\nconst MAX_MOTS = 350;\n\nconst { texte } = $input.first().json;\n\n// Un nouveau chapitre = une ligne \"N. ...\" avec N = chapitre précédent + 1\n// (un \"12. \" isolé au milieu du texte ne crée donc pas de faux chapitre)\nconst chapitres = [];\nfor (const ligne of texte.split('\\n')) {\n  const m = ligne.match(/^(\\d+)\\. ([\\s\\S]*)$/);\n  if (m && Number(m[1]) === chapitres.length + 1) {\n    chapitres.push({ chapitre: Number(m[1]), texte: m[2].trim() });\n  } else if (chapitres.length) {\n    chapitres.at(-1).texte += ' ' + ligne.trim();\n  }\n}\n\nif (chapitres.length !== NB_CHAPITRES) {\n  const suite = chapitres.length && chapitres.length < NB_CHAPITRES\n    ? ` : chapitre ${chapitres.length + 1} introuvable après le chapitre ${chapitres.length}`\n    : '';\n  throw new Error(`${chapitres.length} chapitres trouvés au lieu de ${NB_CHAPITRES}${suite}. Mauvais livre, autre traduction ou PDF mal extrait (rien n'a été indexé).`);\n}\nconst vide = chapitres.find(c => !c.texte);\nif (vide) throw new Error(`Chapitre ${vide.chapitre} vide : PDF mal extrait (rien n'a été indexé).`);\n\nconst nbMots = s => s.split(/\\s+/).filter(Boolean).length;\n\nfunction decouper(texte) {\n  const total = nbMots(texte);\n  if (total <= MAX_MOTS) return [texte];\n  const cible = total / Math.ceil(total / MAX_MOTS);  // parties de taille équilibrée\n  const phrases = texte.match(/[^.!?]+[.!?]+[\"'’”)\\]]*\\s*|[^.!?]+$/g) ?? [texte];\n  const parties = [];\n  let courante = '';\n  for (const p of phrases) {\n    if (courante && nbMots(courante) + nbMots(p) > cible * 1.15) {\n      parties.push(courante.trim());\n      courante = '';\n    }\n    courante += p;\n  }\n  if (courante.trim()) parties.push(courante.trim());\n  return parties;\n}\n\nreturn chapitres.flatMap(c => {\n  const parties = decouper(c.texte);\n  return parties.map((texte, i) => ({\n    json: { chapitre: c.chapitre, partie: i + 1, nb_parties: parties.length, texte },\n  }));\n});\n"
+      },
+      "id": "e1385c29-827c-0421-d323-ac9f4284e20d",
+      "name": "Chunking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AUGMENTATION : métadonnées + en-tête de chapitre ajouté au texte vectorisé\n// (l'en-tête aide la recherche sur \"chapitre 5\" et permet au bot de citer sa source)\nconst LIVRE = \"The Enchiridion (Manuel d'Épictète)\";\nconst AUTEUR = 'Epictetus';\nconst TRADUCTION = 'Elizabeth Carter (1758)';\n\nreturn $input.all().map(({ json: c }) => {\n  const entete = `Enchiridion – Chapter ${c.chapitre}` + (c.nb_parties > 1 ? ` (part ${c.partie}/${c.nb_parties})` : '');\n  return {\n    json: {\n      texte: `${entete}\\n${c.texte}`,\n      chapitre: c.chapitre,\n      partie: c.partie,\n      nb_parties: c.nb_parties,\n      livre: LIVRE,\n      auteur: AUTEUR,\n      traduction: TRADUCTION,\n      source: `${AUTEUR}, ${entete}, trans. ${TRADUCTION}`,\n      nb_mots: c.texte.split(/\\s+/).filter(Boolean).length,\n    },\n  };\n});\n"
+      },
+      "id": "fb28e255-fcd2-ab2e-bdbc-225cf0b18017",
+      "name": "Augmentation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// MOTS-CLÉS : ajoute à chaque chunk ses 8 mots les plus importants (colonne mots_cles)\n// Méthode : mots de 4 lettres ou plus, hors mots vides, classés par fréquence dans le chunk\n// (à égalité : ordre d'apparition). Gratuit, instantané et toujours le même résultat.\nconst NB_MOTS_CLES = 8;\nconst MOTS_VIDES = new Set(`\nabout above after again against also among another anything appear appears because been before\nbeing both cannot could does doing done down each either else even ever every from further have\nhaving hence here into itself just less like made make many more most much must myself neither\nnever none only other others ought over same shall should since some such than that their theirs\nthem themselves then there therefore these they thing things this those though through thus till\ntogether under unless until upon very what whatever when whenever where whether which while whom\nwhose will with within without would your yours yourself yourselves said says whoever thee thou\nthy thine hath doth also wherein whereby anyone anybody someone somebody nothing something\neverything everyone himself herself instead rather indeed still well word words show shows\nshown seem seems another always often perhaps already enough\n`.split(/\\s+/).filter(Boolean));\n\nreturn $input.all().map(({ json: c }) => {\n  const corps = c.texte.split('\\n').slice(1).join(' ');  // sans l'en-tête \"Enchiridion – Chapter N\"\n  const mots = corps.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [];\n  const compte = new Map();\n  mots.forEach((m, i) => {\n    if (m.length < 4 || MOTS_VIDES.has(m) || m.includes(\"'\")) return;\n    const e = compte.get(m) ?? { n: 0, premier: i };\n    e.n++;\n    compte.set(m, e);\n  });\n  const mots_cles = [...compte.entries()]\n    .sort((a, b) => b[1].n - a[1].n || a[1].premier - b[1].premier)\n    .slice(0, NB_MOTS_CLES)\n    .map(([m]) => m);\n  return { json: { ...c, mots_cles } };\n});\n"
+      },
+      "id": "7120109e-fc50-8678-0d21-ebcf4edf649a",
+      "name": "Mots-clés",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 100,
+        "keep": "firstItems"
+      },
+      "id": "24d948e4-bdbe-5b82-24bb-c0dfbab1923f",
+      "name": "Limit",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $workflow.id }}"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "12d87526-e237-5290-0c83-0bbaa30ab48c",
+      "name": "Vectoriser (sous-workflow)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "2206e015-372b-8560-8917-1fbe40f5519b",
+      "name": "Sous-workflow : indexer",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PRÉPARER LES EMBEDDINGS : regroupe les chunks en requêtes batchEmbedContents pour l'API Gemini\n// (100 textes maximum par appel → 1 seul appel pour nos 56 chunks)\nconst MODELE = 'models/gemini-embedding-2';  // le même modèle doit servir pour les questions\nconst PAR_APPEL = 100;\n\nconst chunks = $input.all().map(i => i.json);\nif (chunks.length === 0) throw new Error('Aucun chunk reçu : rien à indexer.');\n\nconst lots = [];\nfor (let i = 0; i < chunks.length; i += PAR_APPEL) {\n  const lot = chunks.slice(i, i + PAR_APPEL);\n  lots.push({\n    json: {\n      modele: MODELE,\n      chunks: lot,\n      requests: lot.map(c => ({ model: MODELE, content: { parts: [{ text: c.texte }] } })),\n    },\n  });\n}\nreturn lots;\n"
+      },
+      "id": "4299c591-da8c-6cec-0063-c3a1e5c4c60c",
+      "name": "Préparer les embeddings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/{{ $json.modele }}:batchEmbedContents",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: $json.requests }) }}",
+        "options": {}
+      },
+      "id": "31ec371a-cd83-e8e0-1b7c-cfae18b769a6",
+      "name": "Embedding des chunks (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PRÉPARER LES LIGNES : associe chaque vecteur Gemini à son chunk → 1 seul JSON pour la fonction SQL\n// epictete_reindexer, qui vide et réinsère la table dans une seule transaction.\nconst lignes = [];\n$input.all().forEach((reponse, i) => {\n  const { chunks } = $('Préparer les embeddings').itemMatching(i).json;\n  const vecteurs = reponse.json.embeddings ?? [];\n  if (vecteurs.length !== chunks.length) {\n    throw new Error(`Gemini a renvoyé ${vecteurs.length} vecteurs pour ${chunks.length} chunks : rien n'a été modifié dans la base.`);\n  }\n  chunks.forEach((c, j) => lignes.push({\n    chapitre: c.chapitre,\n    partie: c.partie,\n    content: c.texte,\n    mots_cles: c.mots_cles,\n    metadata: { livre: c.livre, auteur: c.auteur, traduction: c.traduction, source: c.source, nb_mots: c.nb_mots, nb_parties: c.nb_parties },\n    embedding: `[${vecteurs[j].values.join(',')}]`,\n  }));\n});\n\nconst dimensions = [...new Set(lignes.map(l => l.embedding.split(',').length))];\nif (dimensions.length !== 1) throw new Error(`Vecteurs de tailles différentes (${dimensions.join(', ')}) : rien n'a été modifié.`);\n\nreturn [{ json: { nb_chunks: lignes.length, dimension: dimensions[0], payload: JSON.stringify(lignes) } }];\n"
+      },
+      "id": "8f063347-6022-0255-716f-8bf6566b15a5",
+      "name": "Préparer les lignes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select epictete_reindexer($1::jsonb) as nb_chunks_enregistres;",
+        "options": {
+          "queryReplacement": "={{ [ $json.payload ] }}"
+        }
+      },
+      "id": "ca5ccb70-bf62-b9c0-05d7-b43df3050f16",
+      "name": "Enregistrer dans Supabase (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1340,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "1fd72042-58c5-481a-d122-db74369afdee",
+      "name": "1. Input (chat)",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select * from epictete_historique($1, 3);",
+        "options": {
+          "queryReplacement": "={{ [ $json.sessionId ] }}"
+        }
+      },
+      "id": "5631bb9b-f1ac-2849-973b-2228a961b84c",
+      "name": "2. Context : historique (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        700
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 2. CONTEXT : rassemble la question, la session et les derniers échanges, puis prépare l'appel de ROUTING\n// Entrée : lignes de \"Context : historique (SQL)\" (0 à 3 échanges, du plus ancien au plus récent)\nconst { chatInput, sessionId } = $('1. Input (chat)').first().json;\nconst question = String(chatInput ?? '').trim();\nconst echanges = $input.all().map(i => i.json).filter(e => e.question);\nconst historique = echanges.length\n  ? echanges.map(e => `Utilisateur : ${e.question}\\nAssistant : ${e.reponse}`).join('\\n\\n')\n  : '(début de la conversation)';\n\nconst CONSIGNES_ROUTING = `Tu es le module de ROUTING d'un chatbot sur le Manuel d'Épictète (The Enchiridion, trad. Elizabeth Carter, 52 chapitres, en anglais).\nAnalyse la dernière question en tenant compte de l'historique, puis réponds UNIQUEMENT avec ce JSON :\n{\"route\": \"livre\" | \"conversation\" | \"hors_sujet\", \"requete\": \"...\", \"chapitre\": nombre ou null, \"langue\": \"fr\" | \"en\", \"reponse_directe\": \"...\"}\n\n- route = \"livre\" : la question porte sur le contenu du Manuel, sur Épictète ou le stoïcisme tel qu'il est présenté dans le livre, ou demande un chapitre.\n- route = \"conversation\" : salutation, remerciement, question sur toi-même (« bonjour », « merci », « tu sais faire quoi ? »).\n- route = \"hors_sujet\" : tout le reste (actualité, maths, autre livre, code…).\n- requete (si route = \"livre\") : requête de recherche AUTONOME, EN ANGLAIS, avec les mots importants. Résous les références grâce à l'historique (« et le suivant ? » après le chapitre 8 → \"Enchiridion – Chapter 9\"). Si un chapitre est demandé, commence par \"Enchiridion – Chapter N\".\n- chapitre : le numéro du chapitre demandé explicitement (ou déduit de l'historique), sinon null.\n- langue : la langue de la DERNIÈRE question.\n- reponse_directe (si route ≠ \"livre\") : réponse courte et polie dans cette langue. Pour \"hors_sujet\", explique que tu ne réponds qu'aux questions sur le Manuel d'Épictète.`;\n\nreturn [{\n  json: {\n    sessionId,\n    question,\n    historique,\n    corps_routing: {\n      systemInstruction: { parts: [{ text: CONSIGNES_ROUTING }] },\n      contents: [{ role: 'user', parts: [{ text: `Historique :\\n${historique}\\n\\nDernière question : ${question}` }] }],\n      generationConfig: { temperature: 0, responseMimeType: 'application/json' },\n    },\n  },\n}];\n"
+      },
+      "id": "ea12b6c5-2345-140e-dafc-9a86c558cbb0",
+      "name": "2. Context : construire",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corps_routing) }}",
+        "options": {}
+      },
+      "id": "783bc952-a6c2-b68d-f73b-8ea9f3f62288",
+      "name": "3. Routing (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 3. ROUTING : lit la décision du LLM et la sécurise (une réponse illisible ne doit jamais bloquer le chat)\nconst ctx = $('2. Context : construire').first().json;\nconst brut = $input.first().json?.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? '';\n\nlet d = {};\ntry {\n  d = JSON.parse(brut.replace(/^\\s*```(?:json)?\\s*|\\s*```\\s*$/g, ''));  // tolère un bloc ```json\n} catch (e) {\n  d = {};\n}\n\nconst ROUTES = ['livre', 'conversation', 'hors_sujet'];\nconst route = ROUTES.includes(d.route) ? d.route : 'livre';  // en cas de doute : on cherche dans le livre\nconst chapitre = Number.isInteger(Number(d.chapitre)) && Number(d.chapitre) >= 1 && Number(d.chapitre) <= 52 ? Number(d.chapitre) : null;\nconst langue = d.langue === 'en' ? 'en' : 'fr';\nlet requete = String(d.requete ?? '').trim() || ctx.question;\nif (chapitre && !/chapter\\s+\\d+/i.test(requete)) requete = `Enchiridion – Chapter ${chapitre} ${requete}`;\n\nreturn [{\n  json: {\n    sessionId: ctx.sessionId,\n    question: ctx.question,\n    historique: ctx.historique,\n    route,\n    requete,\n    chapitre,\n    langue,\n    reponse_directe: String(d.reponse_directe ?? '').trim(),\n    routing_lisible: Object.keys(d).length > 0,\n  },\n}];\n"
+      },
+      "id": "ebdd76cc-b01f-7bb5-1f63-893fbc0579f5",
+      "name": "3. Routing : lire la décision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9b64833f-dec3-e326-d5ec-14fa278cb1af",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "livre",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "24a3180c-dbf4-79c2-06e0-9023069c801d",
+      "name": "3. Routing : chercher dans le livre ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'models/gemini-embedding-2', content: { parts: [{ text: $json.requete }] } }) }}",
+        "options": {}
+      },
+      "id": "639919bb-c050-7894-d3cd-4e66ba42a650",
+      "name": "4. Search : embedding de la requête (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select * from epictete_recherche_hybride($1, $2::vector, 10);",
+        "options": {
+          "queryReplacement": "={{ [ $('3. Routing : lire la décision').first().json.requete, '[' + $json.embedding.values.join(',') + ']' ] }}"
+        }
+      },
+      "id": "3dfa3323-d458-6e53-4610-b0b4afdf2ac2",
+      "name": "4. Search : recherche hybride (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1540,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 5. RERANKING (préparation) : numérote les candidats de la recherche hybride et demande à Gemini de les noter\nconst r = $('3. Routing : lire la décision').first().json;\nconst candidats = $input.all().map(i => i.json).filter(c => c.content);\n\nconst CONSIGNES_RERANKING = `Tu es le module de RERANKING d'un chatbot sur le Manuel d'Épictète.\nPour chaque passage, note de 0 à 10 à quel point il aide à répondre à la question (10 = répond directement, 0 = sans rapport).\nRéponds UNIQUEMENT avec ce JSON : {\"scores\": [{\"id\": <numéro du passage>, \"score\": <0 à 10>}, ...]} en notant TOUS les passages.`;\n\nconst liste = candidats.map((c, i) => `[${i + 1}] (chapitre ${c.chapitre})\\n${c.content}`).join('\\n\\n');\n\nreturn [{\n  json: {\n    candidats,\n    corps_reranking: {\n      systemInstruction: { parts: [{ text: CONSIGNES_RERANKING }] },\n      contents: [{ role: 'user', parts: [{ text: `Question : ${r.question}\\nRequête de recherche : ${r.requete}\\n\\nPassages :\\n\\n${liste || '(aucun)'}` }] }],\n      generationConfig: { temperature: 0, responseMimeType: 'application/json' },\n    },\n  },\n}];\n"
+      },
+      "id": "12de4df6-43bc-81fa-4636-4ec6894eefe5",
+      "name": "5. Reranking : préparer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corps_reranking) }}",
+        "options": {}
+      },
+      "id": "31978047-7380-569f-ec88-e0c3988528e8",
+      "name": "5. Reranking (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 5. RERANKING (sélection) : garde les meilleurs passages, puis prépare l'appel de GENERATION\nconst NB_MAX = 4;     // passages envoyés à la génération\nconst NOTE_MIN = 5;   // note minimale sur 10\n\nconst r = $('3. Routing : lire la décision').first().json;\nconst { candidats } = $('5. Reranking : préparer').first().json;\nconst brut = $input.first().json?.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? '';\n\nlet notes = null;\ntry {\n  const d = JSON.parse(brut.replace(/^\\s*```(?:json)?\\s*|\\s*```\\s*$/g, ''));\n  notes = new Map((d.scores ?? []).map(s => [Number(s.id), Number(s.score)]));\n} catch (e) {\n  notes = null;\n}\n\nlet gardes;\nif (notes && notes.size) {\n  gardes = candidats\n    .map((c, i) => ({ ...c, note: notes.get(i + 1) ?? 0, rang_hybride: i + 1 }))\n    .filter(c => c.note >= NOTE_MIN || (r.chapitre && c.chapitre === r.chapitre))  // chapitre demandé : toujours gardé\n    .sort((a, b) => (b.chapitre === r.chapitre) - (a.chapitre === r.chapitre) || b.note - a.note || a.rang_hybride - b.rang_hybride)\n    .slice(0, NB_MAX);\n} else {\n  // notation illisible : on se fie à l'ordre de la recherche hybride\n  gardes = candidats.slice(0, NB_MAX).map((c, i) => ({ ...c, note: null, rang_hybride: i + 1 }));\n}\n\nconst CONSIGNES_GENERATION = `Tu es un guide du Manuel d'Épictète (The Enchiridion, traduction d'Elizabeth Carter).\nRègles :\n1. Réponds UNIQUEMENT à partir des passages fournis. N'utilise jamais tes connaissances générales et n'invente rien.\n2. Si les passages ne permettent pas de répondre, dis simplement que tu ne trouves pas cette information dans le Manuel d'Épictète.\n3. Réponds en ${r.langue === 'en' ? 'anglais' : 'français'}, de façon claire et concise.\n4. Cite tes sources avec le numéro de chapitre, par ex. (Chapitre 5) ou (Chapter 5). Tu peux citer de courts extraits en anglais d'origine, entre guillemets.`;\n\nconst passages = gardes.map(c => `--- Chapitre ${c.chapitre}${c.content.includes('(part ') ? `, partie ${c.partie}` : ''}\\n${c.content}`).join('\\n\\n');\n\nreturn [{\n  json: {\n    gardes: gardes.map(c => ({ chapitre: c.chapitre, partie: c.partie, note: c.note, rang_hybride: c.rang_hybride })),\n    chapitres: [...new Set(gardes.map(c => c.chapitre))],\n    corps_generation: {\n      systemInstruction: { parts: [{ text: CONSIGNES_GENERATION }] },\n      contents: [{ role: 'user', parts: [{ text: `Historique de la conversation :\\n${r.historique}\\n\\nQuestion : ${r.question}\\n\\nPassages du Manuel :\\n\\n${passages || '(aucun passage pertinent trouvé)'}` }] }],\n      generationConfig: { temperature: 0.2 },\n    },\n  },\n}];\n"
+      },
+      "id": "db7a0469-389f-3584-70bc-ac50303018ea",
+      "name": "5. Reranking : garder les meilleurs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corps_generation) }}",
+        "options": {}
+      },
+      "id": "d2f972d5-a1be-dc54-75e1-0b67d77c2c1d",
+      "name": "6. Generation (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 6. GENERATION : récupère le texte de Gemini et prépare l'enregistrement de l'échange\nconst r = $('3. Routing : lire la décision').first().json;\nconst { chapitres } = $('5. Reranking : garder les meilleurs').first().json;\nconst texte = ($input.first().json?.candidates?.[0]?.content?.parts ?? []).map(p => p.text ?? '').join('').trim();\n\nconst reponse = texte || (r.langue === 'en'\n  ? \"Sorry, I couldn't generate an answer. Please try again.\"\n  : \"Désolé, je n'ai pas pu générer de réponse. Réessaie.\");\n\nreturn [{ json: { sessionId: r.sessionId, question: r.question, reponse, route: r.route, requete: r.requete, chapitres } }];\n"
+      },
+      "id": "9d8738b9-5b99-5f61-4471-6b742811336a",
+      "name": "6. Generation : réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// RÉPONSE DIRECTE (route \"conversation\" ou \"hors_sujet\") : pas de recherche, pas d'appel en plus\nconst r = $input.first().json;\nconst PAR_DEFAUT = {\n  conversation: {\n    fr: \"Bonjour ! Je réponds à tes questions sur le Manuel d'Épictète, en citant les chapitres.\",\n    en: \"Hello! I answer your questions about Epictetus' Enchiridion, citing the chapters.\",\n  },\n  hors_sujet: {\n    fr: \"Je ne réponds qu'aux questions sur le Manuel d'Épictète.\",\n    en: \"I only answer questions about Epictetus' Enchiridion.\",\n  },\n};\nconst reponse = r.reponse_directe || PAR_DEFAUT[r.route]?.[r.langue] || PAR_DEFAUT.hors_sujet.fr;\n\nreturn [{ json: { sessionId: r.sessionId, question: r.question, reponse, route: r.route, requete: '', chapitres: [] } }];\n"
+      },
+      "id": "5f1e0dd0-372a-c722-4072-8dc6e18871d5",
+      "name": "Réponse directe (sans recherche)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select * from epictete_sauvegarder_echange($1, $2, $3, $4, $5, $6::int[]);",
+        "options": {
+          "queryReplacement": "={{ [ $json.sessionId, $json.question, $json.reponse, $json.route, $json.requete, '{' + $json.chapitres.join(',') + '}' ] }}"
+        }
+      },
+      "id": "dcd675f3-9cc9-ddbc-f58b-396d38fff98f",
+      "name": "7. Sauvegarder l'échange (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2860,
+        700
+      ]
+    }
+  ],
+  "connections": {
+    "Formulaire : envoyer le livre (PDF)": {
+      "main": [
+        [
+          {
+            "node": "Extraire le texte du PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire le texte du PDF": {
+      "main": [
+        [
+          {
+            "node": "Nettoyage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nettoyage": {
+      "main": [
+        [
+          {
+            "node": "Chunking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunking": {
+      "main": [
+        [
+          {
+            "node": "Augmentation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Augmentation": {
+      "main": [
+        [
+          {
+            "node": "Mots-clés",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mots-clés": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Vectoriser (sous-workflow)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer les embeddings": {
+      "main": [
+        [
+          {
+            "node": "Embedding des chunks (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding des chunks (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Préparer les lignes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer les lignes": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer dans Supabase (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sous-workflow : indexer": {
+      "main": [
+        [
+          {
+            "node": "Préparer les embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Input (chat)": {
+      "main": [
+        [
+          {
+            "node": "2. Context : historique (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Context : historique (SQL)": {
+      "main": [
+        [
+          {
+            "node": "2. Context : construire",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Context : construire": {
+      "main": [
+        [
+          {
+            "node": "3. Routing (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Routing (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "3. Routing : lire la décision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Routing : lire la décision": {
+      "main": [
+        [
+          {
+            "node": "3. Routing : chercher dans le livre ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Routing : chercher dans le livre ?": {
+      "main": [
+        [
+          {
+            "node": "4. Search : embedding de la requête (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Réponse directe (sans recherche)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Search : embedding de la requête (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "4. Search : recherche hybride (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Search : recherche hybride (SQL)": {
+      "main": [
+        [
+          {
+            "node": "5. Reranking : préparer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Reranking : préparer": {
+      "main": [
+        [
+          {
+            "node": "5. Reranking (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Reranking (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "5. Reranking : garder les meilleurs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Reranking : garder les meilleurs": {
+      "main": [
+        [
+          {
+            "node": "6. Generation (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Generation (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "6. Generation : réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Generation : réponse": {
+      "main": [
+        [
+          {
+            "node": "7. Sauvegarder l'échange (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Réponse directe (sans recherche)": {
+      "main": [
+        [
+          {
+            "node": "7. Sauvegarder l'échange (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
