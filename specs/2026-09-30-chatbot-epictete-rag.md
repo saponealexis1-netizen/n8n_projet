@@ -106,6 +106,8 @@ Affirmations :
 - **H6** : aucune clé dans le JSON ; credentials : Gemini (×3 : chat + 2 HTTP), Postgres (×2). — Vérif : grep + test structure.
 - **H7** : « Chapter N » / « chapitre N » → les parties du chapitre N en tête, dans l'ordre. — Vérif : SQL réel, 12 cas.
 
+**Validation (2026-10-01)** : version hybride testée dans n8n + Supabase : 56 lignes avec `mots_cles`, `embedding` et `fts` (poids A/B) ; « que dit le chapitre 8 ? » → réponse fidèle au chapitre 8. Deux corrections ont été nécessaires sur place : le nom exact du modèle (`models/gemini-embedding-2`) et la publication du workflow (prévue par la revue hostile).
+
 Revue hostile (sous-agent, **vrai n8n 2.41.3** + Postgres/pgvector + faux Gemini) :
 - 🔴 l'outil de l'agent exécute la version **publiée** du workflow → documenté : il faut **publier**, et republier après chaque modification ;
 - 🟠 « Chapter N » mal servi (en-tête indexé dans les 56 chunks) → corrigé (en-tête hors de l'index plein texte + priorité au chapitre demandé, H7) ;

@@ -7,7 +7,7 @@ Projets d'automatisation **n8n**, construits avec Claude Code et 3 skills maison
 | # | Projet | Description | Statut |
 |---|---|---|---|
 | 01 | [🏇 Récap Top 5 courses du week-end (PMU)](projets/01_pmu_recap_weekend/) | Chaque lundi 9h30, récupère les courses françaises du week-end (API PMU), sélectionne le top 5 par allocation et envoie un mail personnalisé selon le segment client (actif / inactif) | Démo |
-| 02 | [📖 Chatbot RAG - Manuel d'Épictète](projets/02_chatbot_epictete/) | Chatbot qui répond aux questions sur le Manuel d'Épictète uniquement à partir du livre, en citant les chapitres. Ingestion RAG complète : extraction → nettoyage → chunking → augmentation → vectorisation. Trois versions : Simple Vector Store, **Supabase**, et **recherche hybride** (vecteurs + mots-clés, sur le modèle du flow du prof) | ✅ Simple Vector Store et Supabase validés dans n8n · hybride à valider |
+| 02 | [📖 Chatbot RAG - Manuel d'Épictète](projets/02_chatbot_epictete/) | Chatbot qui répond aux questions sur le Manuel d'Épictète uniquement à partir du livre, en citant les chapitres. Ingestion RAG complète : extraction → nettoyage → chunking → augmentation → vectorisation. Trois versions : Simple Vector Store, **Supabase**, et **recherche hybride** (vecteurs + mots-clés, sur le modèle du flow du prof) | ✅ Validé dans n8n (les 3 versions) |
 
 Chaque projet a son propre README : installation dans n8n, fonctionnement, limites connues.
 
@@ -59,7 +59,7 @@ Exemple concret : le [chatbot Épictète](projets/02_chatbot_epictete/#comment-i
 
 ```bash
 npm install
-npm test                 # tests du chatbot Épictète (dont la version Supabase)
+npm test                 # tests du chatbot Épictète (Simple Vector Store, Supabase, hybride)
 ```
 
 Pour exécuter un node Code d'un workflow hors de n8n :

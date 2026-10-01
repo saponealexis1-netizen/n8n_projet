@@ -2,13 +2,13 @@
 
 Chatbot n8n qui répond aux questions sur **le Manuel d'Épictète** (*The Enchiridion*, trad. Elizabeth Carter, 52 chapitres), **uniquement à partir du livre**, en citant les chapitres. Il répond dans la langue de la question et refuse ce qui n'est pas dans le livre.
 
-✅ **Validé dans n8n**, dans les 2 versions : ingestion des 56 chunks et réponses du chat.
+✅ **Validé dans n8n**, dans les 3 versions : ingestion des 56 chunks et réponses du chat.
 
 | Version | Base vectorielle | Persistance | Fichier |
 |---|---|---|---|
 | Simple Vector Store | En mémoire dans n8n | Perdue au redémarrage de n8n | `workflow_chatbot_epictete.json` |
 | **Supabase** | Table Postgres + pgvector | Permanente, visible dans Supabase | `workflow_chatbot_epictete_supabase.json` |
-| **Hybride** (à valider dans n8n) | Supabase + recherche **vecteurs + mots-clés** | Permanente | `workflow_chatbot_epictete_hybride.json` |
+| **Hybride** | Supabase + recherche **vecteurs + mots-clés** | Permanente | `workflow_chatbot_epictete_hybride.json` |
 
 - Spec : [`specs/2026-09-30-chatbot-epictete-rag.md`](../../specs/2026-09-30-chatbot-epictete-rag.md)
 - Workflow à importer : [`workflow_chatbot_epictete.json`](workflow_chatbot_epictete.json)
@@ -200,6 +200,8 @@ Pour vérifier la taille des vecteurs dans Supabase : `select vector_dims(embedd
 Pour lancer ces tests : `npm test` (voir « Développer »).
 
 ## Version hybride (vecteurs + mots-clés)
+
+✅ **Validé dans n8n et Supabase** : 56 lignes dans `epictete_chunks` (mots-clés, vecteurs, index plein texte), et « que dit le chapitre 8 ? » répond avec le chapitre 8.
 
 Fichier : [`workflow_chatbot_epictete_hybride.json`](workflow_chatbot_epictete_hybride.json) · SQL : [`supabase/setup_hybride.sql`](supabase/setup_hybride.sql). Construite sur le modèle du flow présenté par le prof.
 
