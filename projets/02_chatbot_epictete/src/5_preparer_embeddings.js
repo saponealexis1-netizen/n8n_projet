@@ -1,6 +1,6 @@
 // PRÉPARER LES EMBEDDINGS : regroupe les chunks en requêtes batchEmbedContents pour l'API Gemini
 // (100 textes maximum par appel → 1 seul appel pour nos 56 chunks)
-const MODELE = 'models/gemini-embedding-002';  // le même modèle doit servir pour les questions
+const MODELE = 'models/gemini-embedding-2';  // le même modèle doit servir pour les questions
 const PAR_APPEL = 100;
 
 const chunks = $input.all().map(i => i.json);

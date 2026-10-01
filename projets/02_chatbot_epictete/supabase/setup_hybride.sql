@@ -3,7 +3,7 @@
 -- À coller UNE fois dans Supabase → SQL Editor → Run. Le script est relançable sans risque.
 -- Utilisé par workflow_chatbot_epictete_hybride.json (les autres versions ne sont pas touchées).
 --
--- 3072 = taille des vecteurs de models/gemini-embedding-002 (confirmée dans Supabase).
+-- 3072 = taille des vecteurs de models/gemini-embedding-2 (confirmée dans Supabase).
 -- ============================================================================
 
 create extension if not exists vector;

@@ -11,7 +11,7 @@
 -- cette table à chaque indexation, il ne doit jamais toucher une table "documents" créée
 -- par un autre tutoriel ou projet dans le même Supabase.
 --
--- 3072 = taille des vecteurs de models/gemini-embedding-002 (12288 valeurs pour 4 vecteurs
+-- 3072 = taille des vecteurs de models/gemini-embedding-2 (12288 valeurs pour 4 vecteurs
 -- dans n8n). Si l'insertion échoue avec "expected 3072 dimensions, not N", remplacer
 -- 3072 par N aux DEUX endroits ci-dessous (table + fonction), exécuter
 --   drop table if exists epictete_documents; drop function if exists match_epictete_documents;

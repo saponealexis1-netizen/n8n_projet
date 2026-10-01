@@ -43,8 +43,8 @@ Chat → Agent Épictète ← Google Gemini Chat Model
 | Node | Modèle |
 |---|---|
 | Google Gemini Chat Model | `models/gemini-flash-lite-latest` |
-| Embeddings Google Gemini (ingestion) | `models/gemini-embedding-002` |
-| Embeddings Google Gemini (chat) | `models/gemini-embedding-002` |
+| Embeddings Google Gemini (ingestion) | `models/gemini-embedding-2` |
+| Embeddings Google Gemini (chat) | `models/gemini-embedding-2` |
 
 - `gemini-2.5-flash`, prévu au départ, renvoie **404 aux nouveaux utilisateurs** : Google l'a fermé.
 - ⚠️ **Les 2 nodes d'embeddings doivent utiliser le même modèle.** Les vecteurs de deux modèles différents ne sont pas comparables : le chat ne trouverait plus rien.
@@ -167,7 +167,7 @@ from epictete_documents order by id;
    - **Google Gemini** dans les 3 nodes Google ;
    - **Supabase API** dans **Vectorisation (Supabase)** et **Recherche dans le livre**. Host = URL du projet (`https://<ref>.supabase.co`), clé = **service_role / secret**, jamais la clé anon ;
    - **Postgres** dans **Vider la table epictete_documents**. Dans Supabase → **Connect** → **Session pooler**, recopier : host `aws-….pooler.supabase.com`, port `5432`, database `postgres`, user `postgres.<ref>`, le mot de passe de la base, SSL activé. La connexion directe `db.<ref>.supabase.co` ne marche qu'en IPv6 : à éviter.
-4. Vérifier les modèles : `models/gemini-flash-lite-latest` et `models/gemini-embedding-002` (×2). Enregistrer.
+4. Vérifier les modèles : `models/gemini-flash-lite-latest` et `models/gemini-embedding-2` (×2). Enregistrer.
 
 ### Utilisation
 Exactement comme la version Simple Vector Store : bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF → **Open chat**. Dans Supabase, **Table Editor → epictete_documents** doit montrer **56 lignes**. Une réindexation les remplace sans doublons.
@@ -263,7 +263,7 @@ Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 r
 |---|---|
 | Le chat répond « je ne trouve pas » et l'outil affiche `Workflow is not active and cannot be executed` | **Publier** le workflow (étape 4) |
 | Le chat utilise une ancienne version après une modification | **Republier** le workflow |
-| `404` sur l'embedding | Le nom du modèle (`models/gemini-embedding-002`) diffère de celui de ton compte : le changer dans « Préparer les embeddings » **et** dans l'URL + le body de « Embedding de la question », puis réindexer |
+| `404` sur l'embedding | Le nom du modèle (`models/gemini-embedding-2`) diffère de celui de ton compte : le changer dans « Préparer les embeddings » **et** dans l'URL + le body de « Embedding de la question », puis réindexer |
 | `expected 3072 dimensions, not N` | Dans `setup_hybride.sql`, remplacer 3072 par N (table + fonction), `drop table epictete_chunks;`, relancer le script |
 | `function epictete_recherche_hybride does not exist` | Étape 1 |
 

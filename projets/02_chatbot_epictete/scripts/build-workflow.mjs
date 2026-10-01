@@ -67,7 +67,7 @@ const nodes = [
     embeddingBatchSize: 200, // tous les chunks (~60) dans un seul lot
   }),
   node('Embeddings Google Gemini (ingestion)', '@n8n/n8n-nodes-langchain.embeddingsGoogleGemini', 1, [1240, 240], {
-    modelName: 'models/gemini-embedding-002', // doit être le MÊME dans les 2 nodes d'embeddings
+    modelName: 'models/gemini-embedding-2', // doit être le MÊME dans les 2 nodes d'embeddings
   }),
   node('Chargeur de documents', '@n8n/n8n-nodes-langchain.documentDefaultDataLoader', 1.1, [1480, 240], {
     jsonMode: 'expressionData',
@@ -111,7 +111,7 @@ const nodes = [
     topK: 4,
   }),
   node('Embeddings Google Gemini (chat)', '@n8n/n8n-nodes-langchain.embeddingsGoogleGemini', 1, [760, 1160], {
-    modelName: 'models/gemini-embedding-002', // doit être le MÊME dans les 2 nodes d'embeddings
+    modelName: 'models/gemini-embedding-2', // doit être le MÊME dans les 2 nodes d'embeddings
   }),
 ];
 
@@ -207,7 +207,7 @@ ecrire('workflow_chatbot_epictete_supabase.json', {
 // n8n n'autorise qu'UN déclencheur "appelé par un autre workflow" par workflow : le sous-workflow
 // sert donc à indexer (appelé par l'ingestion) ET à rechercher (appelé par l'outil de l'agent).
 // Table et fonctions SQL : supabase/setup_hybride.sql
-const MODELE_EMBEDDING = 'models/gemini-embedding-002';
+const MODELE_EMBEDDING = 'models/gemini-embedding-2';
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 const LUI_MEME = { __rl: true, mode: 'id', value: '={{ $workflow.id }}' };  // le workflow s'appelle lui-même
 const TRIGGER_SOUS_WF = 'Sous-workflow : indexer ou rechercher';

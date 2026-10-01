@@ -231,12 +231,12 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-002:embedContent",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "googlePalmApi",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'models/gemini-embedding-002', content: { parts: [{ text: $json.query }] } }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'models/gemini-embedding-2', content: { parts: [{ text: $json.query }] } }) }}",
         "options": {}
       },
       "id": "27c0d234-b173-bc5e-d8c5-5a93fdd03c10",
@@ -281,7 +281,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// PRÉPARER LES EMBEDDINGS : regroupe les chunks en requêtes batchEmbedContents pour l'API Gemini\n// (100 textes maximum par appel → 1 seul appel pour nos 56 chunks)\nconst MODELE = 'models/gemini-embedding-002';  // le même modèle doit servir pour les questions\nconst PAR_APPEL = 100;\n\nconst chunks = $input.all().map(i => i.json);\nif (chunks.length === 0) throw new Error('Aucun chunk reçu : rien à indexer.');\n\nconst lots = [];\nfor (let i = 0; i < chunks.length; i += PAR_APPEL) {\n  const lot = chunks.slice(i, i + PAR_APPEL);\n  lots.push({\n    json: {\n      modele: MODELE,\n      chunks: lot,\n      requests: lot.map(c => ({ model: MODELE, content: { parts: [{ text: c.texte }] } })),\n    },\n  });\n}\nreturn lots;\n"
+        "jsCode": "// PRÉPARER LES EMBEDDINGS : regroupe les chunks en requêtes batchEmbedContents pour l'API Gemini\n// (100 textes maximum par appel → 1 seul appel pour nos 56 chunks)\nconst MODELE = 'models/gemini-embedding-2';  // le même modèle doit servir pour les questions\nconst PAR_APPEL = 100;\n\nconst chunks = $input.all().map(i => i.json);\nif (chunks.length === 0) throw new Error('Aucun chunk reçu : rien à indexer.');\n\nconst lots = [];\nfor (let i = 0; i < chunks.length; i += PAR_APPEL) {\n  const lot = chunks.slice(i, i + PAR_APPEL);\n  lots.push({\n    json: {\n      modele: MODELE,\n      chunks: lot,\n      requests: lot.map(c => ({ model: MODELE, content: { parts: [{ text: c.texte }] } })),\n    },\n  });\n}\nreturn lots;\n"
       },
       "id": "4299c591-da8c-6cec-0063-c3a1e5c4c60c",
       "name": "Préparer les embeddings",
