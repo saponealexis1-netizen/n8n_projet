@@ -226,10 +226,14 @@ CHAT           Chat → Agent Épictète ← Gemini Chat Model + Mémoire + outi
 
 Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 remonte grâce au mot exact, et le chapitre 1 grâce au sens.
 
+- **Question sur un chapitre précis** (« Chapter 8 », « chapitre 8 ») : les parties de ce chapitre passent **en tête**, dans l'ordre du texte. L'en-tête « Enchiridion – Chapter N » n'est volontairement **pas** dans l'index plein texte : sinon le mot « chapter » correspondrait aux 56 chunks et fausserait le classement.
+- **Deux indexations en même temps** (double clic) : la seconde attend la fin de la première (verrou SQL), donc pas de doublons.
+
 ### Le Limit (100)
 - C'est la **borne haute du prof** (10 à 100 chunks), et aussi le **maximum de textes par appel** `batchEmbedContents` de Gemini. Nos 56 chunks passent donc tous, en **un seul appel**.
 - C'est un **garde-fou** : un PDF qui produirait des centaines de chunks ne ferait pas exploser le quota.
-- Pour tester sans consommer de quota, le mettre à **3**.
+- Pour tester sans consommer de quota, le mettre à **3**. ⚠️ La table ne contiendra alors que 3 chunks : remettre **100** et réindexer avant d'utiliser le chat.
+- Au-delà de 100 chunks, le Limit couperait sans prévenir. Pour ce livre, c'est impossible : le Chunking exige exactement 52 chapitres, ce qui donne 56 chunks.
 
 ### La table `epictete_chunks`
 | Colonne | Contenu |
@@ -248,14 +252,17 @@ Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 r
 3. Credentials :
    - **Google Gemini** dans **Google Gemini Chat Model**, **Embedding de la question (Gemini)** et **Embedding des chunks (Gemini)**. Dans les 2 HTTP Request, l'authentification « Google Gemini(PaLM) Api » est déjà choisie : il suffit de sélectionner ton credential ;
    - **Postgres** (Session pooler) dans **Recherche hybride (SQL)** et **Enregistrer dans Supabase (SQL)**.
-4. ⚠️ **Enregistrer le workflow (Ctrl+S)**. Le sous-workflow exécute la version **enregistrée** du workflow.
+4. ⚠️ **Enregistrer (Ctrl+S) puis PUBLIER le workflow** (bouton **Publish** en haut à droite). L'outil de l'agent appelle toujours la version **publiée** du workflow, même en test depuis l'éditeur. Sans publication, le chat répond « je ne trouve pas » : dans *Executions*, l'outil affiche `Workflow is not active and cannot be executed`.
 5. Bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF. Supabase → `epictete_chunks` doit montrer **56 lignes**, avec la colonne `mots_cles` remplie.
 6. **Open chat** : la réponse de l'outil montre, pour chaque passage, son rang sémantique et son rang mots-clés.
+
+⚠️ **Après chaque modification du workflow : enregistrer ET republier.** L'ingestion utilise la version en cours d'édition, mais l'outil du chat garde l'ancienne version publiée tant qu'on n'a pas republié.
 
 ### Si ça coince
 | Erreur | Solution |
 |---|---|
-| Le sous-workflow ne trouve pas le workflow / ancienne version exécutée | Enregistrer le workflow (étape 4) |
+| Le chat répond « je ne trouve pas » et l'outil affiche `Workflow is not active and cannot be executed` | **Publier** le workflow (étape 4) |
+| Le chat utilise une ancienne version après une modification | **Republier** le workflow |
 | `404` sur l'embedding | Le nom du modèle (`models/gemini-embedding-002`) diffère de celui de ton compte : le changer dans « Préparer les embeddings » **et** dans l'URL + le body de « Embedding de la question », puis réindexer |
 | `expected 3072 dimensions, not N` | Dans `setup_hybride.sql`, remplacer 3072 par N (table + fonction), `drop table epictete_chunks;`, relancer le script |
 | `function epictete_recherche_hybride does not exist` | Étape 1 |
@@ -263,8 +270,9 @@ Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 r
 ### Vérifié hors n8n (`tests/test_hybride.mjs`)
 - **Structure** : ordre des nodes, Limit à 100, un seul déclencheur, aiguillage indexer / rechercher, même modèle d'embeddings des deux côtés, aucune clé dans le JSON.
 - **Nodes Code sur le vrai PDF** : 56 chunks, 8 mots-clés sans mots vides, 1 seul appel Gemini, erreur claire si Gemini renvoie moins de vecteurs.
-- **SQL exécuté sur Postgres 18 + pgvector** : réindexation atomique (une erreur laisse les 56 anciennes lignes) ; mot exact rare retrouvé ; question sans mot du livre servie par le sens ; fusion RRF ; mots combinés en OU ; « Socrate » trouve « Socrates ».
-- **Mutations** : 6 erreurs introduites exprès, toutes détectées.
+- **SQL exécuté sur Postgres 18 + pgvector** : réindexation atomique (une erreur laisse les 56 anciennes lignes) ; mot exact rare retrouvé ; question sans mot du livre servie par le sens ; fusion RRF ; mots combinés en OU ; « Socrate » trouve « Socrates » ; « Chapter N » / « chapitre N » met le chapitre en tête (12 cas).
+- **Revue hostile dans un vrai n8n 2.41.3** (sous-agent : Postgres + pgvector, faux Gemini) : l'auto-appel, l'aiguillage, le HTTP avec le credential Gemini, les paramètres SQL de 1,7 Mo et le retour vers l'agent fonctionnent. Ses 3 problèmes sont corrigés ou documentés ci-dessus (publication obligatoire, recherche par chapitre, Limit à 3).
+- **Mutations** : 8 erreurs introduites exprès, toutes détectées.
 
 ## Source
 

@@ -116,6 +116,20 @@ ok(r.some(x => x.rang_mots_cles != null && /Socrates/.test(x.content)), `« Socr
 r = await chercher('the and of', '3-1');
 ok(r.length === 4 && r.every(x => x.rang_mots_cles === null), 'question faite uniquement de mots vides → pas d\'erreur, recherche sémantique seule');
 
+// Revue hostile #2 : "Chapter N" doit ramener le chapitre N en tête, même avec un vecteur qui pointe ailleurs
+let rates = [];
+for (const N of [1, 8, 21, 33, 40, 52]) {
+  for (const q of [`Enchiridion – Chapter ${N}`, `que dit le chapitre ${N} ?`]) {
+    const rr = await chercher(q, 'neutre-' + N);
+    if (rr[0]?.chapitre !== N) rates.push(`${q} → ${top(rr)}`);
+  }
+}
+ok(rates.length === 0, `« Chapter N » / « chapitre N » → chapitre N en tête (12 cas)${rates.length ? ' : ' + rates.slice(0, 2).join(' | ') : ''}`);
+const ch33 = await chercher('Enchiridion – Chapter 33', 'neutre');
+ok(ch33.slice(0, 3).map(x => x.partie).join() === '1,2,3', `chapitre recoupé (33) → ses 3 parties dans l'ordre : ${top(ch33)}`);
+const nbChapter = (await db.query("select count(*)::int c from epictete_chunks where fts @@ to_tsquery('english', 'chapter')")).rows[0].c;
+ok(nbChapter === 0, `l'en-tête « Enchiridion – Chapter N » n'est pas dans l'index plein texte (${nbChapter} chunks contiennent « chapter »)`);
+
 const f = run('Formater les passages', (await chercher('Chrysippus', '1-1')).map(x => ({ ...x }))).sortie?.[0]?.passages ?? '';
 ok(/Chapitre 49/.test(f) && /rang mots-clés #1/.test(f) && /chrysippus/.test(f) && /Enchiridion – Chapter 49/.test(f), 'H5 : l\'agent reçoit chapitre, scores/rangs, mots-clés et texte de chaque passage');
 

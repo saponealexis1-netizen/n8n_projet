@@ -104,6 +104,12 @@ Affirmations :
 - **H4** : un mot exact rare (« Chrysippus », « Olympic », « Diogenes ») fait remonter son chapitre en tête, même si le vecteur pointe ailleurs ; une question sans mot du livre est servie par la partie sémantique. — Vérif : SQL réel avec vecteurs contrôlés.
 - **H5** : l'agent reçoit pour chaque passage le chapitre, la partie, le texte, les mots-clés et les rangs sémantique / mots-clés. — Vérif : test du node « Formater les passages ».
 - **H6** : aucune clé dans le JSON ; credentials : Gemini (×3 : chat + 2 HTTP), Postgres (×2). — Vérif : grep + test structure.
+- **H7** : « Chapter N » / « chapitre N » → les parties du chapitre N en tête, dans l'ordre. — Vérif : SQL réel, 12 cas.
+
+Revue hostile (sous-agent, **vrai n8n 2.41.3** + Postgres/pgvector + faux Gemini) :
+- 🔴 l'outil de l'agent exécute la version **publiée** du workflow → documenté : il faut **publier**, et republier après chaque modification ;
+- 🟠 « Chapter N » mal servi (en-tête indexé dans les 56 chunks) → corrigé (en-tête hors de l'index plein texte + priorité au chapitre demandé, H7) ;
+- 🟡 le Limit à 3 vide l'index → documenté ; réindexations simultanées → verrou SQL ; `score` casté explicitement en `float` (Supabase PG 15/17).
 
 ## Questions ouvertes
 - (aucune)

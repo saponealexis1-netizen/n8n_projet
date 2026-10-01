@@ -19,7 +19,8 @@ create table if not exists epictete_chunks (
   embedding  vector(3072) not null,           -- vecteur Gemini (sens du texte)
   -- Index plein texte : mots-clés (poids A, plus important) + texte (poids B).
   -- Config 'english' car le livre est en anglais (racines : "Socrates" → "socrat").
-  -- Calculé par epictete_reindexer (une colonne "generated" refuse array_to_string).
+  -- Calculé par epictete_reindexer (une colonne "generated" refuse array_to_string),
+  -- SANS l'en-tête "Enchiridion – Chapter N" (le mot "chapter" serait dans les 56 chunks).
   fts        tsvector not null
 );
 create index if not exists epictete_chunks_fts_idx on epictete_chunks using gin (fts);
@@ -37,11 +38,13 @@ as $$
 declare
   nb int;
 begin
+  -- Deux indexations simultanées attendent leur tour (sinon risque de 112 lignes)
+  perform pg_advisory_xact_lock(hashtext('epictete_reindexer'));
   delete from epictete_chunks;
   insert into epictete_chunks (chapitre, partie, content, mots_cles, metadata, embedding, fts)
   select x.chapitre, x.partie, x.content, x.mots_cles, x.metadata, x.embedding,
          setweight(to_tsvector('english', array_to_string(x.mots_cles, ' ')), 'A') ||
-         setweight(to_tsvector('english', x.content), 'B')
+         setweight(to_tsvector('english', regexp_replace(x.content, '^[^\n]*\n', '')), 'B')  -- sans l'en-tête
   from (
     select (c->>'chapitre')::int as chapitre,
            (c->>'partie')::int as partie,
@@ -61,6 +64,7 @@ $$;
 --   score = 1/(k + rang_semantique) + 1/(k + rang_mots_cles)
 -- Un chunk bien classé dans les deux remonte ; un chunk trouvé par une seule méthode
 -- reste candidat. Les mots de la question sont combinés en OU (pas besoin de tous les avoir).
+-- Si la question cite un chapitre ("Chapter 8", "chapitre 8"), ses parties passent en tête.
 create or replace function epictete_recherche_hybride(
   question text,
   question_embedding vector(3072),
@@ -80,7 +84,8 @@ language sql
 stable
 as $$
   with requete as (
-    select nullif(replace(plainto_tsquery('english', question)::text, '&', '|'), '')::tsquery as q
+    select nullif(replace(plainto_tsquery('english', question)::text, '&', '|'), '')::tsquery as q,
+           (regexp_match(question, '(?:chapter|chapitre)\s+(\d+)', 'i'))[1]::int as chapitre_demande
   ),
   semantique as (
     select c.id, row_number() over (order by c.embedding <=> question_embedding) as rang
@@ -95,13 +100,25 @@ as $$
     order by ts_rank_cd(c.fts, r.q) desc, c.id
     limit nb * 5
   )
+  , chapitre as (
+    select c.id
+    from epictete_chunks c, requete r
+    where c.chapitre = r.chapitre_demande
+  ),
+  candidats as (
+    select id from semantique union select id from mots union select id from chapitre
+  )
   select c.id, c.chapitre, c.partie, c.content, c.mots_cles,
-         coalesce(1.0 / (k_rrf + s.rang), 0) + coalesce(1.0 / (k_rrf + m.rang), 0) as score,
+         (coalesce(1.0 / (k_rrf + s.rang), 0) + coalesce(1.0 / (k_rrf + m.rang), 0))::float as score,
          s.rang::int as rang_semantique,
          m.rang::int as rang_mots_cles
-  from semantique s
-  full outer join mots m on m.id = s.id
-  join epictete_chunks c on c.id = coalesce(s.id, m.id)
-  order by score desc, c.id
+  from candidats k
+  join epictete_chunks c on c.id = k.id
+  left join semantique s on s.id = k.id
+  left join mots m on m.id = k.id
+  cross join requete r
+  order by (c.chapitre is not distinct from r.chapitre_demande) desc,
+           case when c.chapitre = r.chapitre_demande then c.partie end,  -- parties dans l'ordre du texte
+           score desc, c.id
   limit nb;
 $$;
