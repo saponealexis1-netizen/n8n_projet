@@ -8,6 +8,7 @@ Chatbot n8n qui répond aux questions sur **le Manuel d'Épictète** (*The Enchi
 |---|---|---|---|
 | Simple Vector Store | En mémoire dans n8n | Perdue au redémarrage de n8n | `workflow_chatbot_epictete.json` |
 | **Supabase** | Table Postgres + pgvector | Permanente, visible dans Supabase | `workflow_chatbot_epictete_supabase.json` |
+| **Hybride** (à valider dans n8n) | Supabase + recherche **vecteurs + mots-clés** | Permanente | `workflow_chatbot_epictete_hybride.json` |
 
 - Spec : [`specs/2026-09-30-chatbot-epictete-rag.md`](../../specs/2026-09-30-chatbot-epictete-rag.md)
 - Workflow à importer : [`workflow_chatbot_epictete.json`](workflow_chatbot_epictete.json)
@@ -101,12 +102,16 @@ Cliquer sur **Open chat**, puis par exemple :
 |---|---|
 | `workflow_chatbot_epictete.json` | **Le workflow à importer** : version Simple Vector Store (généré, ne pas modifier à la main) |
 | `workflow_chatbot_epictete_supabase.json` | **Version Supabase** (générée par le même script) |
-| `supabase/setup.sql` | Script SQL à exécuter une fois dans Supabase |
+| `supabase/setup.sql` | Script SQL à exécuter une fois dans Supabase (version Supabase) |
+| `workflow_chatbot_epictete_hybride.json` | **Version hybride** (générée par le même script) |
+| `supabase/setup_hybride.sql` | Script SQL de la version hybride (table `epictete_chunks`, réindexation, recherche hybride) |
+| `src/4_mots_cles.js` … `7_formater_passages.js` | Code des nodes Code de la version hybride |
 | `src/1_nettoyage.js`, `2_chunking.js`, `3_augmentation.js` | Code des 3 nodes Code |
-| `scripts/build-workflow.mjs` | Régénère les 2 JSON à partir de `src/` |
+| `scripts/build-workflow.mjs` | Régénère les 3 JSON à partir de `src/` |
 | `scripts/decouper.mjs` | Régénère le texte de référence `data/enchiridion.json` / `.csv` |
 | `tests/test.mjs` | Tests automatiques (structure, nettoyage, chunking, augmentation, cas d'erreur) |
 | `tests/test_supabase.mjs` | Tests de la version Supabase (structure + SQL exécuté sur Postgres/pgvector) |
+| `tests/test_hybride.mjs` | Tests de la version hybride (structure, nodes Code, SQL hybride) |
 | `tests/extraire_comme_n8n.mjs` | Extrait un PDF exactement comme n8n (pdf.js 5.4.296 + même `parseText`) |
 | `tests/fixtures/` | Textes extraits de PDF de test : livre, version navigateur avec menus/en-têtes, mise en page étroite, autre livre, vide, tronqué, chapitre manquant… |
 | `data/enchiridion.pdf` | Le livre à envoyer dans le formulaire |
@@ -193,6 +198,73 @@ Pour vérifier la taille des vecteurs dans Supabase : `select vector_dims(embedd
 - Revue hostile (sous-agent) : aucun bloquant. Les 6 problèmes trouvés sont corrigés ou documentés ci-dessus.
 
 Pour lancer ces tests : `npm test` (voir « Développer »).
+
+## Version hybride (vecteurs + mots-clés)
+
+Fichier : [`workflow_chatbot_epictete_hybride.json`](workflow_chatbot_epictete_hybride.json) · SQL : [`supabase/setup_hybride.sql`](supabase/setup_hybride.sql). Construite sur le modèle du flow présenté par le prof.
+
+```
+INGESTION      Formulaire → Extraire → Nettoyage → Chunking → Augmentation → Mots-clés → Limit (100) → Vectoriser (sous-workflow)
+SOUS-WORKFLOW  Déclencheur → Rechercher ? ─ non → Préparer les embeddings → Embedding des chunks (HTTP Gemini) → Préparer les lignes → Enregistrer (SQL)
+                                          └ oui → Embedding de la question (HTTP Gemini) → Recherche hybride (SQL) → Formater les passages
+CHAT           Chat → Agent Épictète ← Gemini Chat Model + Mémoire + outil « Recherche hybride dans le livre » (appelle le sous-workflow)
+```
+
+### Ce qui change par rapport à la version Supabase
+| | Version Supabase | Version hybride |
+|---|---|---|
+| Recherche | Sens seulement (vecteurs) | **Sens + mots-clés**, fusionnés |
+| Embeddings | Nodes LangChain | **HTTP Request** direct vers l'API Gemini (comme le prof) |
+| Écriture en base | Node Supabase Vector Store | **SQL** (fonction `epictete_reindexer`) |
+| Colonne mots-clés | — | **`mots_cles`** : 8 mots par chunk |
+| Réindexation | Vider puis insérer (table vide si Gemini échoue) | **Atomique** : une seule transaction, l'ancien contenu reste en cas d'erreur |
+
+### La recherche hybride, simplement
+- **Recherche sémantique** (vecteurs) : trouve les passages **de même sens**, même avec d'autres mots, dans une autre langue.
+- **Recherche par mots-clés** (plein texte Postgres) : trouve les **mots exacts**, comme « Chrysippus », « Olympic » ou « Diogenes ». Elle porte sur la colonne `mots_cles` (poids fort) et sur le texte (poids normal).
+- **Fusion (RRF, Reciprocal Rank Fusion)** : chaque passage reçoit `1/(60 + rang sémantique) + 1/(60 + rang mots-clés)`. Un passage bien classé par les deux méthodes passe devant ; un passage trouvé par une seule méthode reste candidat. On garde les 4 meilleurs.
+
+Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 remonte grâce au mot exact, et le chapitre 1 grâce au sens.
+
+### Le Limit (100)
+- C'est la **borne haute du prof** (10 à 100 chunks), et aussi le **maximum de textes par appel** `batchEmbedContents` de Gemini. Nos 56 chunks passent donc tous, en **un seul appel**.
+- C'est un **garde-fou** : un PDF qui produirait des centaines de chunks ne ferait pas exploser le quota.
+- Pour tester sans consommer de quota, le mettre à **3**.
+
+### La table `epictete_chunks`
+| Colonne | Contenu |
+|---|---|
+| `id` | Numéro de ligne (automatique) |
+| `chapitre`, `partie` | Position dans le livre |
+| `content` | « Enchiridion – Chapter N » + texte du chunk |
+| **`mots_cles`** | Les 8 mots les plus importants du chunk (ex. ch49 : `chrysippus, understand, interpret, …`) |
+| `metadata` | Livre, traduction, source, nombre de mots |
+| `embedding` | Vecteur Gemini (3072 nombres) |
+| `fts` | Index plein texte (mots-clés + texte), calculé à l'insertion |
+
+### Mise en place
+1. **Supabase → SQL Editor** : coller [`supabase/setup_hybride.sql`](supabase/setup_hybride.sql) → **Run**. Ça crée la table `epictete_chunks` et les fonctions `epictete_reindexer` et `epictete_recherche_hybride`. Les tables des autres versions ne sont pas touchées.
+2. **n8n → Import from File** → `workflow_chatbot_epictete_hybride.json`.
+3. Credentials :
+   - **Google Gemini** dans **Google Gemini Chat Model**, **Embedding de la question (Gemini)** et **Embedding des chunks (Gemini)**. Dans les 2 HTTP Request, l'authentification « Google Gemini(PaLM) Api » est déjà choisie : il suffit de sélectionner ton credential ;
+   - **Postgres** (Session pooler) dans **Recherche hybride (SQL)** et **Enregistrer dans Supabase (SQL)**.
+4. ⚠️ **Enregistrer le workflow (Ctrl+S)**. Le sous-workflow exécute la version **enregistrée** du workflow.
+5. Bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF. Supabase → `epictete_chunks` doit montrer **56 lignes**, avec la colonne `mots_cles` remplie.
+6. **Open chat** : la réponse de l'outil montre, pour chaque passage, son rang sémantique et son rang mots-clés.
+
+### Si ça coince
+| Erreur | Solution |
+|---|---|
+| Le sous-workflow ne trouve pas le workflow / ancienne version exécutée | Enregistrer le workflow (étape 4) |
+| `404` sur l'embedding | Le nom du modèle (`models/gemini-embedding-002`) diffère de celui de ton compte : le changer dans « Préparer les embeddings » **et** dans l'URL + le body de « Embedding de la question », puis réindexer |
+| `expected 3072 dimensions, not N` | Dans `setup_hybride.sql`, remplacer 3072 par N (table + fonction), `drop table epictete_chunks;`, relancer le script |
+| `function epictete_recherche_hybride does not exist` | Étape 1 |
+
+### Vérifié hors n8n (`tests/test_hybride.mjs`)
+- **Structure** : ordre des nodes, Limit à 100, un seul déclencheur, aiguillage indexer / rechercher, même modèle d'embeddings des deux côtés, aucune clé dans le JSON.
+- **Nodes Code sur le vrai PDF** : 56 chunks, 8 mots-clés sans mots vides, 1 seul appel Gemini, erreur claire si Gemini renvoie moins de vecteurs.
+- **SQL exécuté sur Postgres 18 + pgvector** : réindexation atomique (une erreur laisse les 56 anciennes lignes) ; mot exact rare retrouvé ; question sans mot du livre servie par le sens ; fusion RRF ; mots combinés en OU ; « Socrate » trouve « Socrates ».
+- **Mutations** : 6 erreurs introduites exprès, toutes détectées.
 
 ## Source
 

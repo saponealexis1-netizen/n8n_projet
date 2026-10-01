@@ -85,6 +85,26 @@ Choix validés : **nouveau workflow** `workflow_chatbot_epictete_supabase.json` 
 - **Validation** (2026-10-01) : version Supabase testée dans n8n + Supabase, tout fonctionne (S4 et S5 confirmées).
 - **Revue hostile Supabase** : aucun bloquant. Corrigé : noms dédiés (une table `documents` préexistante aurait été vidée), RLS, dépannage du README. Documenté : une indexation à la fois, table vide si Gemini échoue après le vidage, credential Postgres via le Session pooler.
 
+## Évolution : recherche hybride (2026-10-01)
+
+Modèle : le flow présenté par le prof (PDF Form → Extract → Cleaning → Chunking → Limit → sous-workflow « Chunking (SUB) » → Embedding en HTTP Request → Execute SQL query). Supabase conservé.
+
+Choix validés : **mots-clés extraits par code** (gratuit, déterministe), **nouvelle table** `epictete_chunks` (la version Supabase validée reste intacte), **pas de Mistral OCR** (notre PDF contient du texte).
+
+Choix techniques (vérifiés dans les sources n8n 2.41.3) :
+- un seul workflow, qui s'appelle lui-même (`$workflow.id`) ; n8n n'autorise qu'**un** déclencheur « appelé par un autre workflow » par workflow → le sous-workflow sert à **indexer** (appelé par l'ingestion) et à **rechercher** (appelé par l'outil de l'agent), aiguillés par un IF sur `action` ;
+- embeddings par **HTTP Request** direct sur l'API Gemini (`batchEmbedContents`, max 100 textes par appel → **Limit = 100**), avec le credential Gemini existant ;
+- écriture par **SQL** : une fonction `epictete_reindexer(jsonb)` vide et réinsère **dans une seule transaction** (corrige « table vide si Gemini échoue ») ;
+- recherche hybride : fonction `epictete_recherche_hybride(question, vecteur)` = recherche sémantique (pgvector, cosinus) + plein texte Postgres (`tsvector` sur mots-clés + texte, config `english`), fusionnées par **Reciprocal Rank Fusion** (RRF, k = 60).
+
+Affirmations :
+- **H1** : chaque chunk a une colonne `mots_cles` de 8 mots max, sans mots vides, extraits du texte du chunk. — Vérif : test du node Code.
+- **H2** : Limit = 100 ne coupe rien avec nos 56 chunks, et garantit un seul appel `batchEmbedContents` (≤ 100 textes). — Vérif : test structure + calcul.
+- **H3** : la réindexation est atomique : si l'insertion échoue (mauvaise dimension…), les anciennes lignes restent. Réindexer donne 56 lignes, jamais 112. — Vérif : SQL réel (PGlite).
+- **H4** : un mot exact rare (« Chrysippus », « Olympic », « Diogenes ») fait remonter son chapitre en tête, même si le vecteur pointe ailleurs ; une question sans mot du livre est servie par la partie sémantique. — Vérif : SQL réel avec vecteurs contrôlés.
+- **H5** : l'agent reçoit pour chaque passage le chapitre, la partie, le texte, les mots-clés et les rangs sémantique / mots-clés. — Vérif : test du node « Formater les passages ».
+- **H6** : aucune clé dans le JSON ; credentials : Gemini (×3 : chat + 2 HTTP), Postgres (×2). — Vérif : grep + test structure.
+
 ## Questions ouvertes
 - (aucune)
 

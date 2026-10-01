@@ -1,0 +1,603 @@
+{
+  "name": "Chatbot RAG - Manuel d'Épictète (recherche hybride)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Chatbot Épictète : charger le livre",
+        "formDescription": "Envoie le PDF du Manuel d'Épictète (The Enchiridion, trad. E. Carter). Il sera nettoyé, découpé et indexé ; les indexations précédentes sont remplacées.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Livre PDF",
+              "fieldType": "file",
+              "acceptFileTypes": ".pdf",
+              "multipleFiles": false,
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "appendAttribution": false,
+          "buttonLabel": "Indexer le livre",
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "Livre indexé ✅ Tu peux maintenant poser tes questions dans le chat."
+            }
+          }
+        }
+      },
+      "id": "f56defa4-0b12-88e0-8d84-b88114c26b23",
+      "name": "Formulaire : envoyer le livre (PDF)",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Livre_PDF",
+        "options": {}
+      },
+      "id": "b4969619-7fd2-9543-cbe0-1d496442c90f",
+      "name": "Extraire le texte du PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NETTOYAGE du texte extrait du PDF\n// Entrée : 1 item { text, numpages } (sortie de \"Extraire le texte du PDF\")\n// Sortie : 1 item { texte } avec un chapitre par ligne (\"1. ...\", \"2. ...\")\nconst { text = '', numpages = 1 } = $input.first().json;\nif (!text.trim()) {\n  throw new Error(\"Aucun texte extrait du PDF (PDF vide ou scanné) : rien n'a été indexé.\");\n}\n\n// Les pages sont séparées par une ligne vide (extraction n8n)\nconst pages = text.replace(/\\r/g, '').split('\\n\\n')\n  .map(p => p.split('\\n').map(l => l.replace(/\\s+/g, ' ').trim()).filter(Boolean));\n\n// 1. En-têtes / pieds de page du navigateur : lignes qui reviennent au BORD de plusieurs pages\n//    (3 premières / 3 dernières lignes ; chiffres ignorés pour attraper \"1/10\", \"2/10\", la date…).\n//    On ne regarde que les bords pour ne jamais supprimer une ligne du livre qui se répète.\nconst cle = l => l.replace(/\\d+/g, '#');\nconst bords = pages.flatMap(p => [...new Set([...p.slice(0, 3), ...p.slice(-3)])]);\nconst freq = {};\nfor (const l of bords) freq[cle(l)] = (freq[cle(l)] ?? 0) + 1;\nconst estEnTete = (l, i, page) => (i < 3 || i >= page.length - 3) && numpages >= 3 && freq[cle(l)] >= 3 && l.length < 200;\nconst estParasite = l =>\n  /^(https?|file):\\/\\//i.test(l) ||                  // URL\n  /^(page\\s*)?\\d+\\s*(\\/|of|sur)\\s*\\d+$/i.test(l) ||  // \"3/10\", \"Page 3 of 10\"\n  /^\\d+$/.test(l);                                   // numéro de page seul\nlet lignes = pages.flatMap(p => p.filter((l, i) => !estEnTete(l, i, p) && !estParasite(l)));\n\n// 2. Garder uniquement le livre : du chapitre 1 jusqu'à \"THE END\" (menu du site, ©, etc. supprimés)\nconst debut = lignes.findIndex(l => /^1\\.( |$)/.test(l));\nif (debut === -1) {\n  throw new Error(\"Chapitre 1 introuvable : ce PDF n'est pas le Manuel d'Épictète (rien n'a été indexé).\");\n}\nconst fin = lignes.findIndex((l, i) => i > debut && /^THE END$/i.test(l));\nlignes = lignes.slice(debut, fin === -1 ? undefined : fin);\n\n// 3. Recoller les lignes coupées : mots coupés par un tiret, puis une ligne par chapitre\nconst texte = lignes.join('\\n')\n  .replace(/([a-z])-\\n([a-z])/g, '$1-$2')  // \"self-\\nrestraint\" -> \"self-restraint\" (tiret gardé)\n  .replace(/\\n(?!\\d+\\.(?: |\\n|$))/g, ' ') // retour à la ligne hors début de chapitre -> espace\n  .replace(/^(\\d+)\\.(?=\\S)/gm, '$1. ')      // \"12.\" seul sur sa ligne -> \"12. \" + texte\n  .replace(/ {2,}/g, ' ')\n  .trim();\n\nreturn [{ json: { texte, nb_caracteres: texte.length, nb_pages: numpages } }];\n"
+      },
+      "id": "01010a10-8661-d763-ef5e-1dc4b044d95b",
+      "name": "Nettoyage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CHUNKING : 1 chunk par chapitre, les chapitres trop longs sont redécoupés par groupes de phrases\n// (le PDF ne conserve pas les paragraphes, on coupe donc entre deux phrases)\nconst NB_CHAPITRES = 52;  // traduction E. Carter (version MIT)\nconst MAX_MOTS = 350;\n\nconst { texte } = $input.first().json;\n\n// Un nouveau chapitre = une ligne \"N. ...\" avec N = chapitre précédent + 1\n// (un \"12. \" isolé au milieu du texte ne crée donc pas de faux chapitre)\nconst chapitres = [];\nfor (const ligne of texte.split('\\n')) {\n  const m = ligne.match(/^(\\d+)\\. ([\\s\\S]*)$/);\n  if (m && Number(m[1]) === chapitres.length + 1) {\n    chapitres.push({ chapitre: Number(m[1]), texte: m[2].trim() });\n  } else if (chapitres.length) {\n    chapitres.at(-1).texte += ' ' + ligne.trim();\n  }\n}\n\nif (chapitres.length !== NB_CHAPITRES) {\n  const suite = chapitres.length && chapitres.length < NB_CHAPITRES\n    ? ` : chapitre ${chapitres.length + 1} introuvable après le chapitre ${chapitres.length}`\n    : '';\n  throw new Error(`${chapitres.length} chapitres trouvés au lieu de ${NB_CHAPITRES}${suite}. Mauvais livre, autre traduction ou PDF mal extrait (rien n'a été indexé).`);\n}\nconst vide = chapitres.find(c => !c.texte);\nif (vide) throw new Error(`Chapitre ${vide.chapitre} vide : PDF mal extrait (rien n'a été indexé).`);\n\nconst nbMots = s => s.split(/\\s+/).filter(Boolean).length;\n\nfunction decouper(texte) {\n  const total = nbMots(texte);\n  if (total <= MAX_MOTS) return [texte];\n  const cible = total / Math.ceil(total / MAX_MOTS);  // parties de taille équilibrée\n  const phrases = texte.match(/[^.!?]+[.!?]+[\"'’”)\\]]*\\s*|[^.!?]+$/g) ?? [texte];\n  const parties = [];\n  let courante = '';\n  for (const p of phrases) {\n    if (courante && nbMots(courante) + nbMots(p) > cible * 1.15) {\n      parties.push(courante.trim());\n      courante = '';\n    }\n    courante += p;\n  }\n  if (courante.trim()) parties.push(courante.trim());\n  return parties;\n}\n\nreturn chapitres.flatMap(c => {\n  const parties = decouper(c.texte);\n  return parties.map((texte, i) => ({\n    json: { chapitre: c.chapitre, partie: i + 1, nb_parties: parties.length, texte },\n  }));\n});\n"
+      },
+      "id": "e1385c29-827c-0421-d323-ac9f4284e20d",
+      "name": "Chunking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AUGMENTATION : métadonnées + en-tête de chapitre ajouté au texte vectorisé\n// (l'en-tête aide la recherche sur \"chapitre 5\" et permet au bot de citer sa source)\nconst LIVRE = \"The Enchiridion (Manuel d'Épictète)\";\nconst AUTEUR = 'Epictetus';\nconst TRADUCTION = 'Elizabeth Carter (1758)';\n\nreturn $input.all().map(({ json: c }) => {\n  const entete = `Enchiridion – Chapter ${c.chapitre}` + (c.nb_parties > 1 ? ` (part ${c.partie}/${c.nb_parties})` : '');\n  return {\n    json: {\n      texte: `${entete}\\n${c.texte}`,\n      chapitre: c.chapitre,\n      partie: c.partie,\n      nb_parties: c.nb_parties,\n      livre: LIVRE,\n      auteur: AUTEUR,\n      traduction: TRADUCTION,\n      source: `${AUTEUR}, ${entete}, trans. ${TRADUCTION}`,\n      nb_mots: c.texte.split(/\\s+/).filter(Boolean).length,\n    },\n  };\n});\n"
+      },
+      "id": "fb28e255-fcd2-ab2e-bdbc-225cf0b18017",
+      "name": "Augmentation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "1fd72042-58c5-481a-d122-db74369afdee",
+      "name": "Chat : question sur le livre",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-flash-lite-latest",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "7e59f9c3-ba6b-f04c-0504-b62287735bb2",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        300,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 10
+      },
+      "id": "7515837d-0617-7b1f-a968-a0fb3b31ea01",
+      "name": "Mémoire de la conversation",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        520,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// MOTS-CLÉS : ajoute à chaque chunk ses 8 mots les plus importants (colonne mots_cles)\n// Méthode : mots de 4 lettres ou plus, hors mots vides, classés par fréquence dans le chunk\n// (à égalité : ordre d'apparition). Gratuit, instantané et toujours le même résultat.\nconst NB_MOTS_CLES = 8;\nconst MOTS_VIDES = new Set(`\nabout above after again against also among another anything appear appears because been before\nbeing both cannot could does doing done down each either else even ever every from further have\nhaving hence here into itself just less like made make many more most much must myself neither\nnever none only other others ought over same shall should since some such than that their theirs\nthem themselves then there therefore these they thing things this those though through thus till\ntogether under unless until upon very what whatever when whenever where whether which while whom\nwhose will with within without would your yours yourself yourselves said says whoever thee thou\nthy thine hath doth also wherein whereby anyone anybody someone somebody nothing something\neverything everyone himself herself instead rather indeed still well word words show shows\nshown seem seems another always often perhaps already enough\n`.split(/\\s+/).filter(Boolean));\n\nreturn $input.all().map(({ json: c }) => {\n  const corps = c.texte.split('\\n').slice(1).join(' ');  // sans l'en-tête \"Enchiridion – Chapter N\"\n  const mots = corps.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [];\n  const compte = new Map();\n  mots.forEach((m, i) => {\n    if (m.length < 4 || MOTS_VIDES.has(m) || m.includes(\"'\")) return;\n    const e = compte.get(m) ?? { n: 0, premier: i };\n    e.n++;\n    compte.set(m, e);\n  });\n  const mots_cles = [...compte.entries()]\n    .sort((a, b) => b[1].n - a[1].n || a[1].premier - b[1].premier)\n    .slice(0, NB_MOTS_CLES)\n    .map(([m]) => m);\n  return { json: { ...c, mots_cles } };\n});\n"
+      },
+      "id": "7120109e-fc50-8678-0d21-ebcf4edf649a",
+      "name": "Mots-clés",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 100,
+        "keep": "firstItems"
+      },
+      "id": "24d948e4-bdbe-5b82-24bb-c0dfbab1923f",
+      "name": "Limit",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $workflow.id }}"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "12d87526-e237-5290-0c83-0bbaa30ab48c",
+      "name": "Vectoriser (sous-workflow)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "2206e015-372b-8560-8917-1fbe40f5519b",
+      "name": "Sous-workflow : indexer ou rechercher",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f8fe5e9a-7f1d-97ad-dd5f-555dbbd8a4eb",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "rechercher",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "22f51aa3-a239-b5c7-9dc5-264cd016af07",
+      "name": "Rechercher ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        260,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-002:embedContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'models/gemini-embedding-002', content: { parts: [{ text: $json.query }] } }) }}",
+        "options": {}
+      },
+      "id": "27c0d234-b173-bc5e-d8c5-5a93fdd03c10",
+      "name": "Embedding de la question (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select * from epictete_recherche_hybride($1, $2::vector, 4);",
+        "options": {
+          "queryReplacement": "={{ [ $('Sous-workflow : indexer ou rechercher').item.json.query, '[' + $json.embedding.values.join(',') + ']' ] }}"
+        }
+      },
+      "id": "ca3d02e8-621c-6ede-9ab9-f53b6602ef5f",
+      "name": "Recherche hybride (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        820,
+        1300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// FORMATER LES PASSAGES : transforme les lignes de la recherche hybride en texte pour l'agent\n// (renvoyé à l'agent comme résultat de l'outil \"manuel_epictete\")\nconst lignes = $input.all().map(i => i.json).filter(r => r.content);\n\nif (lignes.length === 0) {\n  return [{ json: { passages: \"Aucun passage du Manuel d'Épictète ne correspond à cette recherche.\" } }];\n}\n\nconst rang = r => (r == null ? '-' : `#${r}`);\nconst passages = lignes.map((r, i) => [\n  `--- Passage ${i + 1} : Chapitre ${r.chapitre}` + (r.content.includes('(part ') ? `, partie ${r.partie}` : ''),\n  `(score hybride ${Number(r.score).toFixed(4)} · rang sémantique ${rang(r.rang_semantique)} · rang mots-clés ${rang(r.rang_mots_cles)} · mots-clés : ${(r.mots_cles ?? []).join(', ')})`,\n  r.content,\n].join('\\n')).join('\\n\\n');\n\nreturn [{ json: { passages } }];\n"
+      },
+      "id": "7e691b1d-3f23-5d47-be3d-c3ec0b3b2a1f",
+      "name": "Formater les passages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PRÉPARER LES EMBEDDINGS : regroupe les chunks en requêtes batchEmbedContents pour l'API Gemini\n// (100 textes maximum par appel → 1 seul appel pour nos 56 chunks)\nconst MODELE = 'models/gemini-embedding-002';  // le même modèle doit servir pour les questions\nconst PAR_APPEL = 100;\n\nconst chunks = $input.all().map(i => i.json);\nif (chunks.length === 0) throw new Error('Aucun chunk reçu : rien à indexer.');\n\nconst lots = [];\nfor (let i = 0; i < chunks.length; i += PAR_APPEL) {\n  const lot = chunks.slice(i, i + PAR_APPEL);\n  lots.push({\n    json: {\n      modele: MODELE,\n      chunks: lot,\n      requests: lot.map(c => ({ model: MODELE, content: { parts: [{ text: c.texte }] } })),\n    },\n  });\n}\nreturn lots;\n"
+      },
+      "id": "4299c591-da8c-6cec-0063-c3a1e5c4c60c",
+      "name": "Préparer les embeddings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/{{ $json.modele }}:batchEmbedContents",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: $json.requests }) }}",
+        "options": {}
+      },
+      "id": "31ec371a-cd83-e8e0-1b7c-cfae18b769a6",
+      "name": "Embedding des chunks (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PRÉPARER LES LIGNES : associe chaque vecteur Gemini à son chunk → 1 seul JSON pour la fonction SQL\n// epictete_reindexer, qui vide et réinsère la table dans une seule transaction.\nconst lignes = [];\n$input.all().forEach((reponse, i) => {\n  const { chunks } = $('Préparer les embeddings').itemMatching(i).json;\n  const vecteurs = reponse.json.embeddings ?? [];\n  if (vecteurs.length !== chunks.length) {\n    throw new Error(`Gemini a renvoyé ${vecteurs.length} vecteurs pour ${chunks.length} chunks : rien n'a été modifié dans la base.`);\n  }\n  chunks.forEach((c, j) => lignes.push({\n    chapitre: c.chapitre,\n    partie: c.partie,\n    content: c.texte,\n    mots_cles: c.mots_cles,\n    metadata: { livre: c.livre, auteur: c.auteur, traduction: c.traduction, source: c.source, nb_mots: c.nb_mots, nb_parties: c.nb_parties },\n    embedding: `[${vecteurs[j].values.join(',')}]`,\n  }));\n});\n\nconst dimensions = [...new Set(lignes.map(l => l.embedding.split(',').length))];\nif (dimensions.length !== 1) throw new Error(`Vecteurs de tailles différentes (${dimensions.join(', ')}) : rien n'a été modifié.`);\n\nreturn [{ json: { nb_chunks: lignes.length, dimension: dimensions[0], payload: JSON.stringify(lignes) } }];\n"
+      },
+      "id": "8f063347-6022-0255-716f-8bf6566b15a5",
+      "name": "Préparer les lignes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select epictete_reindexer($1::jsonb) as nb_chunks_enregistres;",
+        "options": {
+          "queryReplacement": "={{ [ $json.payload ] }}"
+        }
+      },
+      "id": "ca5ccb70-bf62-b9c0-05d7-b43df3050f16",
+      "name": "Enregistrer dans Supabase (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1340,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "Tu es un guide du Manuel d'Épictète (« The Enchiridion », traduction anglaise d'Elizabeth Carter, 52 chapitres).\n\nRègles :\n1. Pour toute question sur le contenu, cherche TOUJOURS d'abord dans le livre avec l'outil « manuel_epictete ».\n2. Réponds UNIQUEMENT à partir des passages trouvés. S'ils ne contiennent pas la réponse, dis simplement que tu ne trouves pas cette information dans le Manuel d'Épictète. N'utilise jamais tes connaissances générales et n'invente rien.\n3. Réponds dans la langue de la question (français → français, anglais → anglais).\n4. Cite toujours tes sources avec le numéro de chapitre, par ex. (Chapitre 5) ou (Chapter 5). Tu peux citer de courts extraits en anglais d'origine, entre guillemets.\n5. L'outil fait une recherche hybride (sens + mots-clés). Le livre est en anglais : envoie-lui une requête courte EN ANGLAIS avec les mots importants de la question (ex. « death fear Socrates »), même si la question est en français.\n6. Si on te parle d'un chapitre précis (« chapitre 8 », « le chapitre suivant »), utilise l'historique de la conversation pour trouver son numéro et cherche « Enchiridion – Chapter N ».\n7. Sois clair et concis."
+        }
+      },
+      "id": "71e35798-2990-4af0-2adc-99fe952ea5c6",
+      "name": "Agent Épictète",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "name": "manuel_epictete",
+        "description": "Recherche hybride (sens + mots-clés) dans le Manuel d'Épictète (The Enchiridion, trad. E. Carter, en anglais). Entrée : une requête courte en anglais avec les mots importants. Sortie : les 4 passages les plus pertinents avec leur chapitre. À utiliser pour toute question sur le contenu du livre.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $workflow.id }}"
+        },
+        "fields": {
+          "values": [
+            {
+              "name": "action",
+              "type": "stringValue",
+              "stringValue": "rechercher"
+            }
+          ]
+        }
+      },
+      "id": "49f70a50-255d-6ca7-14bd-2ef9b20a23d8",
+      "name": "Recherche hybride dans le livre",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        760,
+        940
+      ]
+    }
+  ],
+  "connections": {
+    "Formulaire : envoyer le livre (PDF)": {
+      "main": [
+        [
+          {
+            "node": "Extraire le texte du PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire le texte du PDF": {
+      "main": [
+        [
+          {
+            "node": "Nettoyage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nettoyage": {
+      "main": [
+        [
+          {
+            "node": "Chunking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunking": {
+      "main": [
+        [
+          {
+            "node": "Augmentation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Augmentation": {
+      "main": [
+        [
+          {
+            "node": "Mots-clés",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mots-clés": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Vectoriser (sous-workflow)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sous-workflow : indexer ou rechercher": {
+      "main": [
+        [
+          {
+            "node": "Rechercher ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rechercher ?": {
+      "main": [
+        [
+          {
+            "node": "Embedding de la question (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer les embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding de la question (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Recherche hybride (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recherche hybride (SQL)": {
+      "main": [
+        [
+          {
+            "node": "Formater les passages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer les embeddings": {
+      "main": [
+        [
+          {
+            "node": "Embedding des chunks (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding des chunks (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Préparer les lignes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer les lignes": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer dans Supabase (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat : question sur le livre": {
+      "main": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mémoire de la conversation": {
+      "ai_memory": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recherche hybride dans le livre": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent Épictète",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

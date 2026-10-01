@@ -2,6 +2,9 @@
 // Usage : node projets/02_chatbot_epictete/scripts/build-workflow.mjs
 //   -> workflow_chatbot_epictete.json           (Simple Vector Store, en mémoire)
 //   -> workflow_chatbot_epictete_supabase.json  (Supabase Vector Store, persistant)
+//   -> workflow_chatbot_epictete_hybride.json   (Supabase + recherche hybride vecteurs + mots-clés,
+//                                                sur le modèle du flow du prof : Limit + sous-workflow
+//                                                + embeddings en HTTP Request + SQL)
 //
 // Types et versions des nodes vérifiés dans les définitions officielles
 // (@n8n/n8n-nodes-langchain 2.41.3 et n8n-nodes-base 2.41.3, dossier dist/node-definitions).
@@ -197,4 +200,130 @@ ecrire('workflow_chatbot_epictete_supabase.json', {
   name: "Chatbot RAG - Manuel d'Épictète (Supabase)",
   nodes: supabaseNodes,
   connections: supabaseConnections,
+});
+
+// ---------- Variante HYBRIDE (vecteurs + mots-clés) ----------
+// Structure du flow du prof : … Chunking → Limit → sous-workflow → Embedding (HTTP) → SQL.
+// n8n n'autorise qu'UN déclencheur "appelé par un autre workflow" par workflow : le sous-workflow
+// sert donc à indexer (appelé par l'ingestion) ET à rechercher (appelé par l'outil de l'agent).
+// Table et fonctions SQL : supabase/setup_hybride.sql
+const MODELE_EMBEDDING = 'models/gemini-embedding-002';
+const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+const LUI_MEME = { __rl: true, mode: 'id', value: '={{ $workflow.id }}' };  // le workflow s'appelle lui-même
+const TRIGGER_SOUS_WF = 'Sous-workflow : indexer ou rechercher';
+const httpGemini = (name, position, url, jsonBody) => node(name, 'n8n-nodes-base.httpRequest', 4.2, position, {
+  method: 'POST',
+  url,
+  authentication: 'predefinedCredentialType',
+  nodeCredentialType: 'googlePalmApi',   // même credential Gemini que le chat (clé ajoutée en ?key=)
+  sendBody: true,
+  specifyBody: 'json',
+  jsonBody,
+  options: {},
+});
+const postgres = (name, position, query, valeurs, extra = {}) => ({
+  ...node(name, 'n8n-nodes-base.postgres', 2.5, position, {
+    operation: 'executeQuery',
+    query,
+    options: { queryReplacement: valeurs },
+  }),
+  ...extra,
+});
+
+const garder = ['Formulaire : envoyer le livre (PDF)', 'Extraire le texte du PDF', 'Nettoyage', 'Chunking', 'Augmentation',
+  'Chat : question sur le livre', 'Google Gemini Chat Model', 'Mémoire de la conversation'];
+const hybrideNodes = [
+  ...nodes.filter(n => garder.includes(n.name)),
+
+  // INGESTION (suite) : comme le prof, Limit puis appel du sous-workflow
+  node('Mots-clés', 'n8n-nodes-base.code', 2, [1300, 0], { jsCode: code('4_mots_cles.js') }),
+  // 100 = borne haute du prof (10 à 100 chunks) ET maximum de textes par appel batchEmbedContents.
+  // Nos 56 chunks passent tous ; mettre 3 pour tester sans consommer de quota.
+  node('Limit', 'n8n-nodes-base.limit', 1, [1560, 0], { maxItems: 100, keep: 'firstItems' }),
+  node('Vectoriser (sous-workflow)', 'n8n-nodes-base.executeWorkflow', 1.2, [1820, 0], {
+    source: 'database',
+    workflowId: LUI_MEME,
+    mode: 'once',
+    options: { waitForSubWorkflow: true },
+  }),
+
+  // SOUS-WORKFLOW
+  node(TRIGGER_SOUS_WF, 'n8n-nodes-base.executeWorkflowTrigger', 1.1, [0, 1400], { inputSource: 'passthrough' }),
+  node('Rechercher ?', 'n8n-nodes-base.if', 2.2, [260, 1400], {
+    conditions: {
+      options: { caseSensitive: true, leftValue: '', typeValidation: 'loose', version: 2 },
+      conditions: [{
+        id: id('condition-rechercher'),
+        leftValue: '={{ $json.action }}',
+        rightValue: 'rechercher',
+        operator: { type: 'string', operation: 'equals' },
+      }],
+      combinator: 'and',
+    },
+    options: {},
+  }),
+  // … branche RECHERCHER (appelée par l'outil de l'agent)
+  httpGemini('Embedding de la question (Gemini)', [560, 1300], `=${GEMINI}/${MODELE_EMBEDDING}:embedContent`,
+    `={{ JSON.stringify({ model: '${MODELE_EMBEDDING}', content: { parts: [{ text: $json.query }] } }) }}`),
+  postgres('Recherche hybride (SQL)', [820, 1300],
+    'select * from epictete_recherche_hybride($1, $2::vector, 4);',
+    `={{ [ $('${TRIGGER_SOUS_WF}').item.json.query, '[' + $json.embedding.values.join(',') + ']' ] }}`,
+    { alwaysOutputData: true }),  // 0 résultat → 1 item vide, pour que l'agent reçoive quand même une réponse
+  node('Formater les passages', 'n8n-nodes-base.code', 2, [1080, 1300], { jsCode: code('7_formater_passages.js') }),
+  // … branche INDEXER (appelée par l'ingestion)
+  node('Préparer les embeddings', 'n8n-nodes-base.code', 2, [560, 1520], { jsCode: code('5_preparer_embeddings.js') }),
+  httpGemini('Embedding des chunks (Gemini)', [820, 1520], `=${GEMINI}/{{ $json.modele }}:batchEmbedContents`,
+    '={{ JSON.stringify({ requests: $json.requests }) }}'),
+  node('Préparer les lignes', 'n8n-nodes-base.code', 2, [1080, 1520], { jsCode: code('6_preparer_lignes.js') }),
+  postgres('Enregistrer dans Supabase (SQL)', [1340, 1520],
+    'select epictete_reindexer($1::jsonb) as nb_chunks_enregistres;',
+    '={{ [ $json.payload ] }}'),
+
+  // CHAT : même agent, l'outil passe par le sous-workflow (recherche hybride)
+  node('Agent Épictète', '@n8n/n8n-nodes-langchain.agent', 2.2, [520, 700], {
+    promptType: 'define',
+    text: '={{ $json.chatInput }}',
+    options: {
+      systemMessage: SYSTEM_MESSAGE.replace('5. Si on te parle',
+        "5. L'outil fait une recherche hybride (sens + mots-clés). Le livre est en anglais : envoie-lui une requête courte EN ANGLAIS avec les mots importants de la question (ex. « death fear Socrates »), même si la question est en français.\n6. Si on te parle").replace('6. Sois clair', '7. Sois clair'),
+    },
+  }),
+  node('Recherche hybride dans le livre', '@n8n/n8n-nodes-langchain.toolWorkflow', 1.3, [760, 940], {
+    name: 'manuel_epictete',
+    description: "Recherche hybride (sens + mots-clés) dans le Manuel d'Épictète (The Enchiridion, trad. E. Carter, en anglais). Entrée : une requête courte en anglais avec les mots importants. Sortie : les 4 passages les plus pertinents avec leur chapitre. À utiliser pour toute question sur le contenu du livre.",
+    source: 'database',
+    workflowId: LUI_MEME,
+    fields: { values: [{ name: 'action', type: 'stringValue', stringValue: 'rechercher' }] },
+  }),
+];
+
+const hybrideConnections = {
+  'Formulaire : envoyer le livre (PDF)': main('Extraire le texte du PDF'),
+  'Extraire le texte du PDF': main('Nettoyage'),
+  'Nettoyage': main('Chunking'),
+  'Chunking': main('Augmentation'),
+  'Augmentation': main('Mots-clés'),
+  'Mots-clés': main('Limit'),
+  'Limit': main('Vectoriser (sous-workflow)'),
+  [TRIGGER_SOUS_WF]: main('Rechercher ?'),
+  'Rechercher ?': { main: [
+    [{ node: 'Embedding de la question (Gemini)', type: 'main', index: 0 }],
+    [{ node: 'Préparer les embeddings', type: 'main', index: 0 }],
+  ] },
+  'Embedding de la question (Gemini)': main('Recherche hybride (SQL)'),
+  'Recherche hybride (SQL)': main('Formater les passages'),
+  'Préparer les embeddings': main('Embedding des chunks (Gemini)'),
+  'Embedding des chunks (Gemini)': main('Préparer les lignes'),
+  'Préparer les lignes': main('Enregistrer dans Supabase (SQL)'),
+  'Chat : question sur le livre': main('Agent Épictète'),
+  'Google Gemini Chat Model': ai('ai_languageModel', 'Agent Épictète'),
+  'Mémoire de la conversation': ai('ai_memory', 'Agent Épictète'),
+  'Recherche hybride dans le livre': ai('ai_tool', 'Agent Épictète'),
+};
+
+ecrire('workflow_chatbot_epictete_hybride.json', {
+  ...workflow,
+  name: "Chatbot RAG - Manuel d'Épictète (recherche hybride)",
+  nodes: hybrideNodes,
+  connections: hybrideConnections,
 });
