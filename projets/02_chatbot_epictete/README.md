@@ -71,7 +71,7 @@ Cliquer sur **Open chat**, puis par exemple :
 
 | Limite | Conséquence | Que faire |
 |---|---|---|
-| Le Simple Vector Store est en mémoire | Après un redémarrage de n8n, la base est vide | Réindexer le PDF (ou passer à Supabase, voir plus bas) |
+| Le Simple Vector Store est en mémoire | Après un redémarrage de n8n, la base est vide | Réindexer le PDF, ou utiliser la version Supabase |
 | La base est vidée **avant** le calcul des embeddings | Si Gemini échoue pendant une réindexation (quota 429, clé invalide), l'ancien livre est perdu | Réindexer une fois l'erreur passée |
 | Le formulaire n'affiche pas le détail des erreurs | Avec un mauvais PDF, il affiche « Problem submitting response » | Le message exact (« 30 chapitres trouvés au lieu de 52… ») est dans **Executions** |
 | n8n en mode queue (plusieurs workers) | Chaque worker a sa propre mémoire : le chat peut ne rien trouver | Utiliser un vector store persistant (Supabase) |
@@ -94,11 +94,14 @@ Cliquer sur **Open chat**, puis par exemple :
 
 | Fichier | Rôle |
 |---|---|
-| `workflow_chatbot_epictete.json` | **Le workflow à importer** (généré, ne pas modifier à la main) |
+| `workflow_chatbot_epictete.json` | **Le workflow à importer** : version Simple Vector Store (généré, ne pas modifier à la main) |
+| `workflow_chatbot_epictete_supabase.json` | **Version Supabase** (générée par le même script) |
+| `supabase/setup.sql` | Script SQL à exécuter une fois dans Supabase |
 | `src/1_nettoyage.js`, `2_chunking.js`, `3_augmentation.js` | Code des 3 nodes Code |
-| `scripts/build-workflow.mjs` | Régénère le JSON à partir de `src/` |
+| `scripts/build-workflow.mjs` | Régénère les 2 JSON à partir de `src/` |
 | `scripts/decouper.mjs` | Régénère le texte de référence `data/enchiridion.json` / `.csv` |
 | `tests/test.mjs` | Tests automatiques (structure, nettoyage, chunking, augmentation, cas d'erreur) |
+| `tests/test_supabase.mjs` | Tests de la version Supabase (structure + SQL exécuté sur Postgres/pgvector) |
 | `tests/extraire_comme_n8n.mjs` | Extrait un PDF exactement comme n8n (pdf.js 5.4.296 + même `parseText`) |
 | `tests/fixtures/` | Textes extraits de PDF de test : livre, version navigateur avec menus/en-têtes, mise en page étroite, autre livre, vide, tronqué, chapitre manquant… |
 | `data/enchiridion.pdf` | Le livre à envoyer dans le formulaire |
@@ -114,11 +117,40 @@ npm run build:chatbot              # après toute modif dans src/
 npm test                           # doit finir par ✅ Tous les tests passent
 ```
 
-## Évolution prévue : Supabase
+## Version Supabase (base persistante)
 
-Remplacer les 2 nodes « Simple Vector Store » par **Supabase Vector Store** pour que le livre survive aux redémarrages. Points déjà repérés :
-- Supabase n'a pas d'option « Clear Store » : il faudra vider la table avant chaque réindexation, sinon les chunks seront en double.
-- La colonne `vector(N)` doit avoir exactement la taille des vecteurs de `gemini-embedding-002`, à vérifier.
+Fichier : [`workflow_chatbot_epictete_supabase.json`](workflow_chatbot_epictete_supabase.json). C'est le même workflow, seuls les 2 vector stores passent sur **Supabase**. Le livre survit aux redémarrages de n8n et les chunks sont visibles dans Supabase.
+
+```
+… Augmentation → Vider la table documents (Postgres, TRUNCATE, 1 seule fois) → Reprendre les chunks → Vectorisation (Supabase)
+Chat → Agent ← … ← Recherche dans le livre (Supabase) ← Embeddings Gemini
+```
+
+### Mise en place (une seule fois)
+1. **Supabase → SQL Editor → New query** : coller [`supabase/setup.sql`](supabase/setup.sql) → **Run**. Ça crée l'extension `vector`, la table `documents` et la fonction `match_documents`.
+2. **n8n → Import from File** → `workflow_chatbot_epictete_supabase.json`.
+3. Sélectionner les credentials :
+   - **Google Gemini** dans les 3 nodes Google ;
+   - **Postgres** (ta connexion Supabase) dans **Vider la table documents** ;
+   - **Supabase API** dans **Vectorisation (Supabase)** et **Recherche dans le livre**.
+4. Vérifier les modèles : `models/gemini-flash-lite-latest` et `models/gemini-embedding-002` (×2). Enregistrer.
+
+### Utilisation
+Exactement comme la version Simple Vector Store : bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF → **Open chat**. Dans Supabase, **Table Editor → documents** doit montrer **56 lignes**. Une réindexation remplace ces lignes sans créer de doublons.
+
+### Si ça coince
+| Erreur | Cause | Solution |
+|---|---|---|
+| `expected 3072 dimensions, not N` | Le modèle d'embeddings ne produit pas 3072 valeurs | Dans `setup.sql`, remplacer `3072` par `N` (table + fonction), exécuter `drop table if exists documents;` puis relancer le script |
+| `relation "public.documents" does not exist` | `setup.sql` n'a pas été exécuté | Étape 1 |
+| `Could not find the function public.match_documents` | Fonction absente ou paramètres différents | Relancer `setup.sql` |
+| Le chat ne trouve rien | Table vide, ou modèle d'embeddings différent entre ingestion et chat | Réindexer ; même modèle dans les 2 nodes |
+
+### Vérifié hors n8n
+- `setup.sql` a été exécuté sur PostgreSQL 18 + pgvector 0.8.1 (PGlite) : insertion des 56 chunks exactement comme LangChain (le code utilisé par n8n), recherche, filtre, réindexation sans doublons, erreur explicite en cas de mauvaise taille.
+- Le JSON a été vérifié : ordre des nodes, TRUNCATE exécuté une seule fois, même table des deux côtés, autres nodes identiques à la version validée.
+
+Pour lancer ces tests : `npm test` (voir « Développer »).
 
 ## Source
 

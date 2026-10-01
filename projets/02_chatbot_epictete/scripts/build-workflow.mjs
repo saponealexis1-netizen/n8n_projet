@@ -1,5 +1,7 @@
 // Assemble le workflow n8n importable à partir des nodes Code de src/
-// Usage : node projets/02_chatbot_epictete/scripts/build-workflow.mjs  -> projets/02_chatbot_epictete/workflow_chatbot_epictete.json
+// Usage : node projets/02_chatbot_epictete/scripts/build-workflow.mjs
+//   -> workflow_chatbot_epictete.json           (Simple Vector Store, en mémoire)
+//   -> workflow_chatbot_epictete_supabase.json  (Supabase Vector Store, persistant)
 //
 // Types et versions des nodes vérifiés dans les définitions officielles
 // (@n8n/n8n-nodes-langchain 2.41.3 et n8n-nodes-base 2.41.3, dossier dist/node-definitions).
@@ -137,5 +139,61 @@ const workflow = {
   pinData: {},
 };
 
-writeFileSync(new URL('workflow_chatbot_epictete.json', racine), JSON.stringify(workflow, null, 2) + '\n');
-console.log(`OK : ${nodes.length} nodes, ${Object.keys(connections).length} connexions`);
+const ecrire = (fichier, wf) => {
+  writeFileSync(new URL(fichier, racine), JSON.stringify(wf, null, 2) + '\n');
+  console.log(`OK : ${fichier} : ${wf.nodes.length} nodes, ${Object.keys(wf.connections).length} connexions`);
+};
+ecrire('workflow_chatbot_epictete.json', workflow);
+
+// ---------- Variante SUPABASE ----------
+// Même workflow, seuls les 2 vector stores changent + vidage de la table avant insertion
+// (Supabase n'a pas d'option "Clear Store"). Table/fonction : supabase/setup.sql
+const TABLE = { __rl: true, mode: 'list', value: 'documents', cachedResultName: 'documents' };
+const SUPABASE_OPTIONS = { queryName: 'match_documents' };
+const decaler = (n, dx) => ({ ...n, position: [n.position[0] + dx, n.position[1]] });
+const sousNodesIngestion = ['Embeddings Google Gemini (ingestion)', 'Chargeur de documents', 'Pas de re-découpage (chunks déjà prêts)'];
+
+const supabaseNodes = nodes.flatMap(n => {
+  if (n.name === 'Vectorisation (Simple Vector Store)') {
+    return [
+      { ...node('Vider la table documents', 'n8n-nodes-base.postgres', 2.5, [1320, 0], {
+        operation: 'executeQuery',
+        query: 'TRUNCATE TABLE public.documents RESTART IDENTITY;',
+        options: {},
+      }), executeOnce: true },  // une seule fois, pas 56
+      node('Reprendre les chunks', 'n8n-nodes-base.code', 2, [1560, 0], {
+        jsCode: "// Le TRUNCATE ne renvoie qu'un item : on repart des chunks produits par Augmentation\nreturn $('Augmentation').all().map(item => ({ json: item.json }));",
+      }),
+      node('Vectorisation (Supabase)', '@n8n/n8n-nodes-langchain.vectorStoreSupabase', 1.1, [1820, 0], {
+        mode: 'insert',
+        tableName: TABLE,
+        options: SUPABASE_OPTIONS,
+      }),
+    ];
+  }
+  if (n.name === 'Recherche dans le livre') {
+    const { memoryKey, ...params } = n.parameters;
+    return [node(n.name, '@n8n/n8n-nodes-langchain.vectorStoreSupabase', 1.1, n.position, {
+      ...params,
+      tableName: TABLE,
+      options: SUPABASE_OPTIONS,
+    })];
+  }
+  return [sousNodesIngestion.includes(n.name) ? decaler(n, 500) : n];
+});
+
+const supabaseConnections = {
+  ...connections,
+  'Augmentation': main('Vider la table documents'),
+  'Vider la table documents': main('Reprendre les chunks'),
+  'Reprendre les chunks': main('Vectorisation (Supabase)'),
+  'Embeddings Google Gemini (ingestion)': ai('ai_embedding', 'Vectorisation (Supabase)'),
+  'Chargeur de documents': ai('ai_document', 'Vectorisation (Supabase)'),
+};
+
+ecrire('workflow_chatbot_epictete_supabase.json', {
+  ...workflow,
+  name: "Chatbot RAG - Manuel d'Épictète (Supabase)",
+  nodes: supabaseNodes,
+  connections: supabaseConnections,
+});

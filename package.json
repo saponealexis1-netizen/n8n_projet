@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node projets/02_chatbot_epictete/tests/test.mjs",
+    "test": "node projets/02_chatbot_epictete/tests/test.mjs && node projets/02_chatbot_epictete/tests/test_supabase.mjs",
     "build:chatbot": "node projets/02_chatbot_epictete/scripts/build-workflow.mjs"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-pgvector": "0.0.9",
     "luxon": "^3.5.0",
     "pdfjs-dist": "5.4.296"
   }

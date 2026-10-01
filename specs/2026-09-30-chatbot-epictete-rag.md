@@ -72,6 +72,16 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 ## Revue hostile (sous-agent)
 6 problèmes trouvés : 3 corrigés dans le code et testés (le filtre des en-têtes supprimait du texte en mise en page étroite ; les traits d'union étaient perdus ; « 12. » seul sur sa ligne faisait échouer l'ingestion avec un message trompeur), 3 documentés (procédure « Test step » qui n'indexe rien, erreur générique dans le formulaire, base vidée avant les embeddings).
 
+## Évolution : Supabase (2026-10-01)
+
+Choix validés : **nouveau workflow** `workflow_chatbot_epictete_supabase.json` (la version Simple Vector Store reste intacte), **table vidée avant chaque indexation** (Supabase n'a pas de « Clear Store »), table créée **une fois via le SQL Editor** (`supabase/setup.sql`).
+
+- **S1** : seuls les 2 vector stores changent ; tous les autres nodes sont identiques à la version validée. — Vérif : `test_supabase.mjs` compare les deux JSON.
+- **S2** : la table n'est vidée (`TRUNCATE … RESTART IDENTITY`, une seule fois grâce à executeOnce) qu'après validation des 52 chapitres ; réindexer donne 56 lignes, jamais 112. — Vérif : ordre des connexions + exécution réelle du TRUNCATE puis réinsertion sur Postgres/pgvector.
+- **S3** : `setup.sql` crée exactement ce qu'attend LangChain SupabaseVectorStore (vérifié dans @langchain/community 1.1.27, utilisé par n8n 2.41.3) : table `documents(id, content, metadata, embedding)` et fonction `match_documents(query_embedding, match_count, filter)` qui renvoie `id, content, metadata, similarity`. — Vérif : script exécuté sur PostgreSQL 18 + pgvector 0.8.1 (PGlite), insertion de 56 chunks et recherche.
+- **S4** : vecteurs de **3072** dimensions (gemini-embedding-002 : 12288 valeurs pour 4 vecteurs dans n8n) ; une mauvaise taille donne une erreur explicite « expected 3072 dimensions, not N ». — Vérif : test + confirmation à la première indexation dans n8n.
+- **S5** : après indexation, la table contient 56 lignes visibles dans Supabase (Table Editor), et le chat répond comme avant. — Vérif : test manuel dans n8n.
+
 ## Questions ouvertes
 - (aucune)
 
