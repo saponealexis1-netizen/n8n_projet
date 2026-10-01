@@ -2,7 +2,12 @@
 
 Chatbot n8n qui répond aux questions sur **le Manuel d'Épictète** (*The Enchiridion*, trad. Elizabeth Carter, 52 chapitres), **uniquement à partir du livre**, en citant les chapitres. Il répond dans la langue de la question et refuse ce qui n'est pas dans le livre.
 
-✅ **Validé dans n8n** : ingestion des 56 chunks et réponses du chat.
+✅ **Validé dans n8n**, dans les 2 versions : ingestion des 56 chunks et réponses du chat.
+
+| Version | Base vectorielle | Persistance | Fichier |
+|---|---|---|---|
+| Simple Vector Store | En mémoire dans n8n | Perdue au redémarrage de n8n | `workflow_chatbot_epictete.json` |
+| **Supabase** | Table Postgres + pgvector | Permanente, visible dans Supabase | `workflow_chatbot_epictete_supabase.json` |
 
 - Spec : [`specs/2026-09-30-chatbot-epictete-rag.md`](../../specs/2026-09-30-chatbot-epictete-rag.md)
 - Workflow à importer : [`workflow_chatbot_epictete.json`](workflow_chatbot_epictete.json)
@@ -119,6 +124,8 @@ npm test                           # doit finir par ✅ Tous les tests passent
 
 ## Version Supabase (base persistante)
 
+✅ **Validé dans n8n et Supabase.**
+
 Fichier : [`workflow_chatbot_epictete_supabase.json`](workflow_chatbot_epictete_supabase.json). C'est le même workflow, seuls les 2 vector stores passent sur **Supabase**. Le livre survit aux redémarrages de n8n et les chunks sont visibles dans Supabase.
 
 ```
@@ -127,6 +134,26 @@ Chat → Agent ← … ← Recherche dans le livre (Supabase) ← Embeddings Gem
 ```
 
 La table et la fonction ont des **noms dédiés** (`epictete_documents`, `match_epictete_documents`). Le workflow **vide cette table à chaque indexation**, et ces noms garantissent qu'il ne touchera jamais une table `documents` créée par un autre tutoriel dans le même projet Supabase.
+
+### La table `epictete_documents`
+
+C'est la **mémoire du chatbot** : les 56 chunks du livre, chacun avec son vecteur. C'est là que le chat cherche les passages pertinents avant de répondre.
+
+| Colonne | Type | Contenu | Rempli par |
+|---|---|---|---|
+| `id` | `bigserial` | Numéro de ligne, de 1 à 56 (automatique) | Postgres |
+| `content` | `text` | Texte du chunk, précédé de « Enchiridion – Chapter N » | Node Augmentation |
+| `metadata` | `jsonb` | `chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots` | Chargeur de documents |
+| `embedding` | `vector(3072)` | Le **sens** du texte, en 3072 nombres | Embeddings Gemini |
+
+- **Indexation** : la table est vidée, puis Gemini calcule un vecteur par chunk et n8n insère les 56 lignes.
+- **Question** : Gemini transforme la question en vecteur, puis la fonction `match_epictete_documents` renvoie les 4 chunks les plus proches en sens, avec un score de similarité. L'agent répond à partir de ces chunks en citant les chapitres.
+
+Pour voir le contenu dans le SQL Editor :
+```sql
+select id, metadata->>'chapitre' as chapitre, metadata->>'partie' as partie, left(content, 80) as debut
+from epictete_documents order by id;
+```
 
 ### Mise en place (une seule fois)
 1. **Supabase → SQL Editor → New query** : coller [`supabase/setup.sql`](supabase/setup.sql) → **Run**. Ça crée l'extension `vector`, la table `epictete_documents` (avec RLS activé) et la fonction `match_epictete_documents`.

@@ -82,6 +82,7 @@ Choix validés : **nouveau workflow** `workflow_chatbot_epictete_supabase.json` 
 - **S4** : vecteurs de **3072** dimensions (gemini-embedding-002 : 12288 valeurs pour 4 vecteurs dans n8n) ; une mauvaise taille donne une erreur explicite « expected 3072 dimensions, not N ». — Vérif : test + confirmation à la première indexation dans n8n.
 - **S5** : après indexation, la table contient 56 lignes visibles dans Supabase (Table Editor), et le chat répond comme avant. — Vérif : test manuel dans n8n.
 
+- **Validation** (2026-10-01) : version Supabase testée dans n8n + Supabase, tout fonctionne (S4 et S5 confirmées).
 - **Revue hostile Supabase** : aucun bloquant. Corrigé : noms dédiés (une table `documents` préexistante aurait été vidée), RLS, dépannage du README. Documenté : une indexation à la fois, table vide si Gemini échoue après le vidage, credential Postgres via le Session pooler.
 
 ## Questions ouvertes
