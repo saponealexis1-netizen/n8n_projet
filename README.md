@@ -31,7 +31,7 @@ n8n_projet/
 │       ├── README.md
 │       ├── workflow_chatbot_epictete.json           ← à importer (Simple Vector Store)
 │       ├── workflow_chatbot_epictete_supabase.json  ← à importer (Supabase)
-│       ├── supabase/setup.sql                       ← à exécuter une fois dans Supabase
+│       ├── supabase/setup.sql                       ← à exécuter une fois dans Supabase (table epictete_documents)
 │       ├── data/                            ← le livre (PDF + texte de référence)
 │       ├── src/                             ← code des nodes Code
 │       ├── scripts/                         ← génération du workflow

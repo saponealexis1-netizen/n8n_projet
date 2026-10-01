@@ -148,17 +148,18 @@ ecrire('workflow_chatbot_epictete.json', workflow);
 // ---------- Variante SUPABASE ----------
 // Même workflow, seuls les 2 vector stores changent + vidage de la table avant insertion
 // (Supabase n'a pas d'option "Clear Store"). Table/fonction : supabase/setup.sql
-const TABLE = { __rl: true, mode: 'list', value: 'documents', cachedResultName: 'documents' };
-const SUPABASE_OPTIONS = { queryName: 'match_documents' };
+// Noms dédiés : le workflow vide la table, il ne doit jamais toucher la table d'un autre projet
+const TABLE = { __rl: true, mode: 'list', value: 'epictete_documents', cachedResultName: 'epictete_documents' };
+const SUPABASE_OPTIONS = { queryName: 'match_epictete_documents' };
 const decaler = (n, dx) => ({ ...n, position: [n.position[0] + dx, n.position[1]] });
 const sousNodesIngestion = ['Embeddings Google Gemini (ingestion)', 'Chargeur de documents', 'Pas de re-découpage (chunks déjà prêts)'];
 
 const supabaseNodes = nodes.flatMap(n => {
   if (n.name === 'Vectorisation (Simple Vector Store)') {
     return [
-      { ...node('Vider la table documents', 'n8n-nodes-base.postgres', 2.5, [1320, 0], {
+      { ...node('Vider la table epictete_documents', 'n8n-nodes-base.postgres', 2.5, [1320, 0], {
         operation: 'executeQuery',
-        query: 'TRUNCATE TABLE public.documents RESTART IDENTITY;',
+        query: 'TRUNCATE TABLE public.epictete_documents RESTART IDENTITY;',
         options: {},
       }), executeOnce: true },  // une seule fois, pas 56
       node('Reprendre les chunks', 'n8n-nodes-base.code', 2, [1560, 0], {
@@ -184,8 +185,8 @@ const supabaseNodes = nodes.flatMap(n => {
 
 const supabaseConnections = {
   ...connections,
-  'Augmentation': main('Vider la table documents'),
-  'Vider la table documents': main('Reprendre les chunks'),
+  'Augmentation': main('Vider la table epictete_documents'),
+  'Vider la table epictete_documents': main('Reprendre les chunks'),
   'Reprendre les chunks': main('Vectorisation (Supabase)'),
   'Embeddings Google Gemini (ingestion)': ai('ai_embedding', 'Vectorisation (Supabase)'),
   'Chargeur de documents': ai('ai_document', 'Vectorisation (Supabase)'),

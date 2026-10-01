@@ -4,7 +4,7 @@
 // 1. Structure du workflow Supabase (connexions, ordre, executeOnce, même table partout)
 // 2. Exécution RÉELLE de supabase/setup.sql sur Postgres + pgvector (PGlite), puis insertion et
 //    recherche exactement comme le fait LangChain SupabaseVectorStore (utilisé par le node n8n) :
-//    upsert {content, embedding, metadata} dans `documents`, puis rpc match_documents(query_embedding, match_count, filter)
+//    upsert {content, embedding, metadata} dans la table, puis rpc <fonction>(query_embedding, match_count, filter)
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -24,6 +24,7 @@ const DIM = 3072;
 let echecs = 0;
 const ok = (cond, msg) => { console.log(`${cond ? '✅' : '❌'} ${msg}`); if (!cond) echecs++; };
 const n = nom => wf.nodes.find(x => x.name === nom);
+const truncateSql = wf.nodes.find(x => x.name === 'Vider la table epictete_documents').parameters.query;
 const suivant = nom => wf.connections[nom]?.main?.[0]?.map(c => c.node) ?? [];
 
 // ---------- Structure ----------
@@ -33,14 +34,14 @@ const cibles = Object.values(wf.connections).flatMap(c => Object.values(c).flat(
 ok(Object.keys(wf.connections).every(x => noms.has(x)) && cibles.every(x => noms.has(x)), 'toutes les connexions pointent vers des nodes existants');
 ok([...noms].every(x => wf.connections[x] || cibles.includes(x)), 'aucun node isolé');
 ok(!wf.nodes.some(x => x.type.endsWith('vectorStoreInMemory')), 'plus aucun Simple Vector Store');
-ok(JSON.stringify(suivant('Augmentation')) === '["Vider la table documents"]'
-  && JSON.stringify(suivant('Vider la table documents')) === '["Reprendre les chunks"]'
+ok(JSON.stringify(suivant('Augmentation')) === '["Vider la table epictete_documents"]'
+  && JSON.stringify(suivant('Vider la table epictete_documents')) === '["Reprendre les chunks"]'
   && JSON.stringify(suivant('Reprendre les chunks')) === '["Vectorisation (Supabase)"]',
   'ordre : Augmentation → Vider la table → Reprendre les chunks → Vectorisation (le vidage n\'a lieu que si les 52 chapitres sont validés)');
-ok(n('Vider la table documents').executeOnce === true, 'le TRUNCATE ne s\'exécute qu\'une fois (executeOnce), pas 56');
+ok(n('Vider la table epictete_documents').executeOnce === true, 'le TRUNCATE ne s\'exécute qu\'une fois (executeOnce), pas 56');
 const tables = wf.nodes.filter(x => x.type.endsWith('vectorStoreSupabase')).map(x => x.parameters.tableName?.value);
-ok(tables.length === 2 && tables.every(t => t === 'documents'), `les 2 nodes Supabase utilisent la table "documents" (${JSON.stringify(tables)})`);
-ok(wf.nodes.filter(x => x.type.endsWith('vectorStoreSupabase')).every(x => x.parameters.options?.queryName === 'match_documents'), 'les 2 nodes Supabase appellent match_documents');
+ok(tables.length === 2 && tables.every(t => t === 'epictete_documents'), `les 2 nodes Supabase utilisent la table dédiée "epictete_documents" (${JSON.stringify(tables)})`);
+ok(wf.nodes.filter(x => x.type.endsWith('vectorStoreSupabase')).every(x => x.parameters.options?.queryName === 'match_epictete_documents'), 'les 2 nodes Supabase appellent match_epictete_documents');
 ok(n('Recherche dans le livre').parameters.mode === 'retrieve-as-tool' && n('Recherche dans le livre').parameters.toolName === 'manuel_epictete', 'la recherche reste un outil de l\'agent (manuel_epictete)');
 // Tout le reste est identique à la version validée
 const pareil = memoire.nodes.filter(x => !/Simple Vector Store|Recherche dans le livre/.test(x.name))
@@ -69,6 +70,14 @@ await db.exec(SQL);
 await db.exec(SQL);
 ok(true, `script exécuté 2 fois sans erreur (relançable) sur ${pgv}, pgvector ${(await db.query("select extversion from pg_extension where extname='vector'")).rows[0].extversion}`);
 
+ok((await db.query("select relrowsecurity r from pg_class where relname = 'epictete_documents'")).rows[0].r === true, 'RLS activée : table inaccessible avec la clé anon (API publique)');
+
+// Revue hostile #1 : une table "documents" d'un autre projet (tutoriel en 1536) ne doit jamais être touchée
+await db.exec("create table documents (id bigserial primary key, content text, metadata jsonb, embedding vector(1536)); insert into documents (content) values ('donnée d''un autre projet');");
+await db.exec(SQL);
+await db.exec(truncateSql);
+ok((await db.query('select count(*)::int c from documents')).rows[0].c === 1, 'une table "documents" existante (autre projet) n\'est ni modifiée ni vidée par setup.sql + le TRUNCATE du workflow');
+
 // Vecteurs factices mais déterministes (on teste la base, pas la qualité de Gemini)
 const vec = graine => {
   const v = []; let h = createHash('sha256').update(String(graine)).digest();
@@ -81,14 +90,14 @@ const lignes = chunks.map(c => ({
   embedding: vec(`${c.chapitre}-${c.partie}`),
   metadata: Object.fromEntries(['chapitre', 'partie', 'livre', 'traduction', 'source', 'nb_mots'].map(k => [k, String(c[k])])),
 }));
-const inserer = async () => { for (const l of lignes) await db.query('insert into documents (content, embedding, metadata) values ($1, $2, $3)', [l.content, l.embedding, l.metadata]); };
+const inserer = async () => { for (const l of lignes) await db.query('insert into epictete_documents (content, embedding, metadata) values ($1, $2, $3)', [l.content, l.embedding, l.metadata]); };
 await inserer();
-ok((await db.query('select count(*)::int c from documents')).rows[0].c === 56, 'insertion des 56 chunks avec les colonnes de LangChain (content, embedding, metadata, id auto)');
+ok((await db.query('select count(*)::int c from epictete_documents')).rows[0].c === 56, 'insertion des 56 chunks avec les colonnes de LangChain (content, embedding, metadata, id auto)');
 
 // Appel comme PostgREST : paramètres nommés
-const chercher = (graine, k, filtre = {}) => db.query('select * from match_documents(query_embedding => $1, match_count => $2, filter => $3)', [vec(graine), k, filtre]);
+const chercher = (graine, k, filtre = {}) => db.query('select * from match_epictete_documents(query_embedding => $1, match_count => $2, filter => $3)', [vec(graine), k, filtre]);
 const r = await chercher('5-1', 4);
-ok(r.rows.length === 4, `match_documents renvoie match_count = 4 résultats`);
+ok(r.rows.length === 4, `la fonction de recherche renvoie match_count = 4 résultats`);
 ok(r.rows[0].metadata.chapitre === '5' && Math.abs(r.rows[0].similarity - 1) < 1e-6, `le plus proche est le bon chunk (chapitre ${r.rows[0].metadata.chapitre}, similarité ${r.rows[0].similarity.toFixed(4)})`);
 ok(r.rows.every((x, i) => i === 0 || x.similarity <= r.rows[i - 1].similarity), 'résultats triés par similarité décroissante');
 ok(['id', 'content', 'metadata', 'similarity'].every(c => c in r.rows[0]) && r.rows[0].content.startsWith('Enchiridion – Chapter 5'), 'colonnes renvoyées : id, content, metadata, similarity (ce que lit LangChain)');
@@ -96,15 +105,14 @@ const f = await chercher('5-1', 4, { chapitre: '33' });
 ok(f.rows.length === 3 && f.rows.every(x => x.metadata.chapitre === '33'), `filtre par métadonnées : chapitre 33 → ${f.rows.length} parties`);
 
 // Le TRUNCATE du workflow
-const truncate = n('Vider la table documents').parameters.query;
-await db.exec(truncate);
+await db.exec(truncateSql);
 await inserer();
-const apres = (await db.query('select count(*)::int c, min(id)::int m from documents')).rows[0];
-ok(apres.c === 56 && apres.m === 1, `réindexation : "${truncate}" puis insertion → ${apres.c} chunks (pas de doublons), ids repartis à ${apres.m}`);
+const apres = (await db.query('select count(*)::int c, min(id)::int m from epictete_documents')).rows[0];
+ok(apres.c === 56 && apres.m === 1, `réindexation : "${truncateSql}" puis insertion → ${apres.c} chunks (pas de doublons), ids repartis à ${apres.m}`);
 
 // Mauvaise dimension : erreur claire (celle que verrait l'utilisateur dans n8n)
 let erreur = '';
-try { await db.query('insert into documents (content, embedding, metadata) values ($1, $2, $3)', ['x', `[${Array(768).fill(0.1).join(',')}]`, {}]); } catch (e) { erreur = e.message; }
+try { await db.query('insert into epictete_documents (content, embedding, metadata) values ($1, $2, $3)', ['x', `[${Array(768).fill(0.1).join(',')}]`, {}]); } catch (e) { erreur = e.message; }
 ok(/expected 3072 dimensions, not 768/.test(erreur), `vecteur de mauvaise taille → erreur explicite : « ${erreur} »`);
 
 console.log(`\n${echecs ? `❌ ${echecs} échec(s)` : '✅ Tous les tests Supabase passent'}`);

@@ -77,10 +77,12 @@ Les deux parties utilisent la **même clé de mémoire** du Simple Vector Store 
 Choix validés : **nouveau workflow** `workflow_chatbot_epictete_supabase.json` (la version Simple Vector Store reste intacte), **table vidée avant chaque indexation** (Supabase n'a pas de « Clear Store »), table créée **une fois via le SQL Editor** (`supabase/setup.sql`).
 
 - **S1** : seuls les 2 vector stores changent ; tous les autres nodes sont identiques à la version validée. — Vérif : `test_supabase.mjs` compare les deux JSON.
-- **S2** : la table n'est vidée (`TRUNCATE … RESTART IDENTITY`, une seule fois grâce à executeOnce) qu'après validation des 52 chapitres ; réindexer donne 56 lignes, jamais 112. — Vérif : ordre des connexions + exécution réelle du TRUNCATE puis réinsertion sur Postgres/pgvector.
-- **S3** : `setup.sql` crée exactement ce qu'attend LangChain SupabaseVectorStore (vérifié dans @langchain/community 1.1.27, utilisé par n8n 2.41.3) : table `documents(id, content, metadata, embedding)` et fonction `match_documents(query_embedding, match_count, filter)` qui renvoie `id, content, metadata, similarity`. — Vérif : script exécuté sur PostgreSQL 18 + pgvector 0.8.1 (PGlite), insertion de 56 chunks et recherche.
+- **S2** : la table n'est vidée (`TRUNCATE … RESTART IDENTITY`, une seule fois grâce à executeOnce) qu'après validation des 52 chapitres ; une réindexation donne 56 lignes, pas 112 (une indexation à la fois : deux envois simultanés peuvent créer des doublons, documenté). — Vérif : ordre des connexions + exécution réelle du TRUNCATE puis réinsertion sur Postgres/pgvector.
+- **S3** : `setup.sql` crée exactement ce qu'attend LangChain SupabaseVectorStore (vérifié dans @langchain/community 1.1.27, utilisé par n8n 2.41.3) : table `epictete_documents(id, content, metadata, embedding)` et fonction `match_epictete_documents(query_embedding, match_count, filter)` (noms dédiés pour ne jamais vider la table `documents` d'un autre projet ; RLS activée) qui renvoie `id, content, metadata, similarity`. — Vérif : script exécuté sur PostgreSQL 18 + pgvector 0.8.1 (PGlite), insertion de 56 chunks et recherche.
 - **S4** : vecteurs de **3072** dimensions (gemini-embedding-002 : 12288 valeurs pour 4 vecteurs dans n8n) ; une mauvaise taille donne une erreur explicite « expected 3072 dimensions, not N ». — Vérif : test + confirmation à la première indexation dans n8n.
 - **S5** : après indexation, la table contient 56 lignes visibles dans Supabase (Table Editor), et le chat répond comme avant. — Vérif : test manuel dans n8n.
+
+- **Revue hostile Supabase** : aucun bloquant. Corrigé : noms dédiés (une table `documents` préexistante aurait été vidée), RLS, dépannage du README. Documenté : une indexation à la fois, table vide si Gemini échoue après le vidage, credential Postgres via le Session pooler.
 
 ## Questions ouvertes
 - (aucune)

@@ -94,11 +94,11 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "TRUNCATE TABLE public.documents RESTART IDENTITY;",
+        "query": "TRUNCATE TABLE public.epictete_documents RESTART IDENTITY;",
         "options": {}
       },
-      "id": "46187ce4-423d-be77-adcc-8a7551e2dae2",
-      "name": "Vider la table documents",
+      "id": "e9f56e7d-66e4-c6a5-ef94-afa94ac635d6",
+      "name": "Vider la table epictete_documents",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
@@ -126,11 +126,11 @@
         "tableName": {
           "__rl": true,
           "mode": "list",
-          "value": "documents",
-          "cachedResultName": "documents"
+          "value": "epictete_documents",
+          "cachedResultName": "epictete_documents"
         },
         "options": {
-          "queryName": "match_documents"
+          "queryName": "match_epictete_documents"
         }
       },
       "id": "a1032075-6c89-0a59-fe17-55b22c262b26",
@@ -283,11 +283,11 @@
         "tableName": {
           "__rl": true,
           "mode": "list",
-          "value": "documents",
-          "cachedResultName": "documents"
+          "value": "epictete_documents",
+          "cachedResultName": "epictete_documents"
         },
         "options": {
-          "queryName": "match_documents"
+          "queryName": "match_epictete_documents"
         }
       },
       "id": "6723aa8b-2d3c-54e5-968e-103e81328c3a",
@@ -362,7 +362,7 @@
       "main": [
         [
           {
-            "node": "Vider la table documents",
+            "node": "Vider la table epictete_documents",
             "type": "main",
             "index": 0
           }
@@ -457,7 +457,7 @@
         ]
       ]
     },
-    "Vider la table documents": {
+    "Vider la table epictete_documents": {
       "main": [
         [
           {

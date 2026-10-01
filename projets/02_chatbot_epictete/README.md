@@ -122,33 +122,48 @@ npm test                           # doit finir par ✅ Tous les tests passent
 Fichier : [`workflow_chatbot_epictete_supabase.json`](workflow_chatbot_epictete_supabase.json). C'est le même workflow, seuls les 2 vector stores passent sur **Supabase**. Le livre survit aux redémarrages de n8n et les chunks sont visibles dans Supabase.
 
 ```
-… Augmentation → Vider la table documents (Postgres, TRUNCATE, 1 seule fois) → Reprendre les chunks → Vectorisation (Supabase)
+… Augmentation → Vider la table epictete_documents (Postgres, TRUNCATE, 1 seule fois) → Reprendre les chunks → Vectorisation (Supabase)
 Chat → Agent ← … ← Recherche dans le livre (Supabase) ← Embeddings Gemini
 ```
 
+La table et la fonction ont des **noms dédiés** (`epictete_documents`, `match_epictete_documents`). Le workflow **vide cette table à chaque indexation**, et ces noms garantissent qu'il ne touchera jamais une table `documents` créée par un autre tutoriel dans le même projet Supabase.
+
 ### Mise en place (une seule fois)
-1. **Supabase → SQL Editor → New query** : coller [`supabase/setup.sql`](supabase/setup.sql) → **Run**. Ça crée l'extension `vector`, la table `documents` et la fonction `match_documents`.
+1. **Supabase → SQL Editor → New query** : coller [`supabase/setup.sql`](supabase/setup.sql) → **Run**. Ça crée l'extension `vector`, la table `epictete_documents` (avec RLS activé) et la fonction `match_epictete_documents`.
 2. **n8n → Import from File** → `workflow_chatbot_epictete_supabase.json`.
-3. Sélectionner les credentials :
+3. Créer et sélectionner les credentials :
    - **Google Gemini** dans les 3 nodes Google ;
-   - **Postgres** (ta connexion Supabase) dans **Vider la table documents** ;
-   - **Supabase API** dans **Vectorisation (Supabase)** et **Recherche dans le livre**.
+   - **Supabase API** dans **Vectorisation (Supabase)** et **Recherche dans le livre**. Host = URL du projet (`https://<ref>.supabase.co`), clé = **service_role / secret**, jamais la clé anon ;
+   - **Postgres** dans **Vider la table epictete_documents**. Dans Supabase → **Connect** → **Session pooler**, recopier : host `aws-….pooler.supabase.com`, port `5432`, database `postgres`, user `postgres.<ref>`, le mot de passe de la base, SSL activé. La connexion directe `db.<ref>.supabase.co` ne marche qu'en IPv6 : à éviter.
 4. Vérifier les modèles : `models/gemini-flash-lite-latest` et `models/gemini-embedding-002` (×2). Enregistrer.
 
 ### Utilisation
-Exactement comme la version Simple Vector Store : bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF → **Open chat**. Dans Supabase, **Table Editor → documents** doit montrer **56 lignes**. Une réindexation remplace ces lignes sans créer de doublons.
+Exactement comme la version Simple Vector Store : bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF → **Open chat**. Dans Supabase, **Table Editor → epictete_documents** doit montrer **56 lignes**. Une réindexation les remplace sans doublons.
+
+⚠️ **Une indexation à la fois** : deux envois du formulaire en même temps (double clic) peuvent créer des doublons. Dans ce cas, réindexer une fois.
+
+⚠️ **Si l'indexation échoue après le vidage** (quota Gemini 429, clé invalide), la table reste vide et le chat répond « je ne trouve pas ». Il suffit de relancer l'indexation.
 
 ### Si ça coince
 | Erreur | Cause | Solution |
 |---|---|---|
-| `expected 3072 dimensions, not N` | Le modèle d'embeddings ne produit pas 3072 valeurs | Dans `setup.sql`, remplacer `3072` par `N` (table + fonction), exécuter `drop table if exists documents;` puis relancer le script |
-| `relation "public.documents" does not exist` | `setup.sql` n'a pas été exécuté | Étape 1 |
-| `Could not find the function public.match_documents` | Fonction absente ou paramètres différents | Relancer `setup.sql` |
+| `expected X dimensions, not Y` | La table a été créée pour des vecteurs de X valeurs, le modèle en produit Y | Dans `setup.sql`, remplacer `3072` par **Y** (table + fonction), exécuter `drop table if exists epictete_documents; drop function if exists match_epictete_documents;` puis relancer le script, puis réindexer |
+| `relation "public.epictete_documents" does not exist` | `setup.sql` n'a pas été exécuté | Étape 1 |
+| `Could not find the function public.match_epictete_documents` | Fonction absente | Relancer `setup.sql` |
+| `cannot change return type of existing function` | Une ancienne version de la fonction existe avec d'autres colonnes | `drop function if exists match_epictete_documents;` puis relancer `setup.sql` |
+| Le node Postgres n'arrive pas à se connecter | Connexion directe IPv6 ou mauvais user | Utiliser le **Session pooler** (étape 3) |
+| `new row violates row-level security policy` | Credential Supabase avec la clé anon | Utiliser la clé **service_role** |
 | Le chat ne trouve rien | Table vide, ou modèle d'embeddings différent entre ingestion et chat | Réindexer ; même modèle dans les 2 nodes |
 
+Pour vérifier la taille des vecteurs dans Supabase : `select vector_dims(embedding) from epictete_documents limit 1;` → `3072`.
+
 ### Vérifié hors n8n
-- `setup.sql` a été exécuté sur PostgreSQL 18 + pgvector 0.8.1 (PGlite) : insertion des 56 chunks exactement comme LangChain (le code utilisé par n8n), recherche, filtre, réindexation sans doublons, erreur explicite en cas de mauvaise taille.
-- Le JSON a été vérifié : ordre des nodes, TRUNCATE exécuté une seule fois, même table des deux côtés, autres nodes identiques à la version validée.
+- `setup.sql` a été exécuté sur PostgreSQL 18 + pgvector 0.8.1 (PGlite), et peut être relancé sans erreur.
+- Insertion des 56 chunks exactement comme LangChain (le code utilisé par n8n), puis recherche, filtre et réindexation sans doublons.
+- Erreur explicite en cas de mauvaise taille de vecteur. RLS est activé.
+- Une table `documents` d'un autre projet n'est jamais touchée.
+- JSON : ordre des nodes, TRUNCATE exécuté une seule fois, même table des deux côtés, autres nodes identiques à la version validée.
+- Revue hostile (sous-agent) : aucun bloquant. Les 6 problèmes trouvés sont corrigés ou documentés ci-dessus.
 
 Pour lancer ces tests : `npm test` (voir « Développer »).
 
