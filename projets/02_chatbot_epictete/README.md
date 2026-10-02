@@ -2,14 +2,14 @@
 
 Chatbot n8n qui répond aux questions sur **le Manuel d'Épictète** (*The Enchiridion*, trad. Elizabeth Carter, 52 chapitres), **uniquement à partir du livre**, en citant les chapitres. Il répond dans la langue de la question et refuse ce qui n'est pas dans le livre.
 
-✅ **Validé dans n8n** : Simple Vector Store, Supabase et hybride (ingestion des 56 chunks et réponses du chat). La version answering est à valider.
+✅ **Validé dans n8n**, dans les 4 versions : ingestion des 56 chunks et réponses du chat.
 
 | Version | Base vectorielle | Persistance | Fichier |
 |---|---|---|---|
 | Simple Vector Store | En mémoire dans n8n | Perdue au redémarrage de n8n | `workflow_chatbot_epictete.json` |
 | **Supabase** | Table Postgres + pgvector | Permanente, visible dans Supabase | `workflow_chatbot_epictete_supabase.json` |
 | **Hybride** | Supabase + recherche **vecteurs + mots-clés** | Permanente | `workflow_chatbot_epictete_hybride.json` |
-| **Answering** (à valider dans n8n) | Hybride + pipeline de réponse **Context → Routing → Search → Reranking → Generation** | Permanente (+ historique des conversations) | `workflow_chatbot_epictete_answering.json` |
+| **Answering** | Hybride + pipeline de réponse **Context → Routing → Search → Reranking → Generation** | Permanente (+ historique des conversations) | `workflow_chatbot_epictete_answering.json` |
 
 - Spec : [`specs/2026-09-30-chatbot-epictete-rag.md`](../../specs/2026-09-30-chatbot-epictete-rag.md)
 - Workflow à importer : [`workflow_chatbot_epictete.json`](workflow_chatbot_epictete.json)
@@ -285,6 +285,8 @@ Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 r
 
 Fichier : [`workflow_chatbot_epictete_answering.json`](workflow_chatbot_epictete_answering.json) · SQL : [`supabase/setup_answering.sql`](supabase/setup_answering.sql), en plus de `setup_hybride.sql`.
 
+✅ **Validé dans n8n** avec les nodes Google Gemini natifs : les 6 étapes s'exécutent, 10 candidats → reranking → génération → sauvegarde.
+
 L'ingestion est **la même que la version hybride**, avec la même table `epictete_chunks`. Seul le chat change : plus d'agent qui décide tout seul, chaque étape de la réponse est un **node visible**.
 
 ```
@@ -331,6 +333,11 @@ Appels Gemini par question : **4** pour une question sur le livre (routing, embe
    - « Quelle est la capitale du Japon ? », hors sujet.
 
    Dans *Executions*, chaque étape montre ce qu'elle a décidé : la route, la requête réécrite, les 10 candidats, les notes du reranking, les passages gardés.
+
+### Pourquoi autant de nodes ?
+Chaque node correspond à une étape demandée, et les petits nodes Code rendent chaque décision visible dans *Executions* : route choisie, requête réécrite, notes du reranking, passages gardés. On pourrait en fusionner 2 ou 3 dans des expressions, mais on perdrait cette lisibilité.
+
+Le seul réglage d'allègement utile : passer la recherche de 10 à 6 candidats (node « 4. Search : recherche hybride (SQL) »), ce qui raccourcit le prompt de reranking.
 
 ### Si ça coince
 | Situation | Ce qui se passe / que faire |

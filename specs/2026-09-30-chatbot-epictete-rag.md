@@ -106,7 +106,7 @@ Affirmations :
 - **H6** : aucune clé dans le JSON ; credentials : Gemini (×3 : chat + 2 HTTP), Postgres (×2). — Vérif : grep + test structure.
 - **H7** : « Chapter N » / « chapitre N » → les parties du chapitre N en tête, dans l'ordre. — Vérif : SQL réel, 12 cas.
 
-**Validation (2026-10-01)** : pipeline answering exécuté dans n8n (version HTTP) : les 6 étapes passent, 10 candidats → reranking → génération. Les appels texte sont ensuite passés au node Gemini natif.
+**Validation (2026-10-01)** : pipeline answering exécuté dans n8n (version HTTP) : les 6 étapes passent, 10 candidats → reranking → génération. Les appels texte sont ensuite passés au node Gemini natif, et cette version est revalidée dans n8n (02/10) : toutes les étapes vertes.
 
 **Validation (2026-10-01)** : version hybride testée dans n8n + Supabase : 56 lignes avec `mots_cles`, `embedding` et `fts` (poids A/B) ; « que dit le chapitre 8 ? » → réponse fidèle au chapitre 8. Deux corrections ont été nécessaires sur place : le nom exact du modèle (`models/gemini-embedding-2`) et la publication du workflow (prévue par la revue hostile).
 
