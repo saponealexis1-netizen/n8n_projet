@@ -1,74 +1,83 @@
 # n8n_projet
 
-Projets d'automatisation **n8n**, construits avec Claude Code et 3 skills maison qui imposent une méthode : **spec → développement dans le doute → revue hostile**.
+Projets d'automatisation **n8n**, construits avec Claude Code et 3 **skills** maison qui imposent une méthode de travail : **spec → développement dans le doute → revue hostile**.
 
-## Projets
+## 📖 Projet principal : chatbot RAG sur le Manuel d'Épictète
 
-| # | Projet | Description | Statut |
-|---|---|---|---|
-| 01 | [🏇 Récap Top 5 courses du week-end (PMU)](projets/01_pmu_recap_weekend/) | Chaque lundi 9h30, récupère les courses françaises du week-end (API PMU), sélectionne le top 5 par allocation et envoie un mail personnalisé selon le segment client (actif / inactif) | Démo |
-| 02 | [📖 Chatbot RAG - Manuel d'Épictète](projets/02_chatbot_epictete/) | Chatbot qui répond aux questions sur le Manuel d'Épictète uniquement à partir du livre, en citant les chapitres. Ingestion RAG complète : extraction → nettoyage → chunking → augmentation → vectorisation. Quatre versions : Simple Vector Store, **Supabase**, **recherche hybride** (vecteurs + mots-clés, sur le modèle du flow du prof) et **answering** (Context → Routing → Search → Reranking → Generation) | ✅ Validé dans n8n (les 4 versions) |
+**[`projets/02_chatbot_epictete/`](projets/02_chatbot_epictete/)**, ✅ validé dans n8n + Supabase.
 
-Chaque projet a son propre README : installation dans n8n, fonctionnement, limites connues.
+Un chatbot qui répond aux questions sur *The Enchiridion* d'Épictète **uniquement à partir du livre**, en **citant les chapitres** :
 
-📘 **[Fiche récap](FICHE_RECAP.md)** : le flow node par node, l'ingestion et l'answering expliqués avec des exemples, le CLI n8n et le MCP.
+```
+INGESTION   PDF → Extraction → Cleaning → Chunking → Augmentation (+ mots-clés) → Vectorisation (Gemini → Supabase)
+ANSWERING   Question → Context → Routing → Search (hybride : sens + mots-clés) → Reranking → Generation
+```
+
+| Pour… | Aller à |
+|---|---|
+| Installer et lancer le chatbot | [README du chatbot](projets/02_chatbot_epictete/README.md) |
+| Comprendre chaque node et chaque étape, avec des exemples | 📘 **[Fiche récap](FICHE_RECAP.md)** (contient aussi le CLI n8n et le MCP) |
+| Voir les objectifs et les affirmations vérifiées | [Spec](specs/2026-09-30-chatbot-epictete-rag.md) |
+| Voir les 3 versions qui ont mené à la version finale | [Versions précédentes](projets/02_chatbot_epictete/docs/versions_precedentes.md) |
+
+## 🏇 Premier projet : récap du week-end PMU
+
+**[`projets/01_pmu_recap_weekend/`](projets/01_pmu_recap_weekend/)** (démo). Chaque lundi à 9h30, le flow récupère les courses françaises du week-end via l'API PMU et sélectionne le top 5 par allocation. Il envoie ensuite un mail personnalisé selon le segment du client : *fidélisation* pour les actifs, *réactivation* pour les inactifs. Le README l'explique node par node.
+
+---
 
 ## Structure du repo
 
 ```
 n8n_projet/
 ├── README.md                      ← ce fichier
-├── FICHE_RECAP.md                 ← fiche de révision (flow, ingestion, answering, CLI, MCP)
+├── FICHE_RECAP.md                 ← fiche de révision : flow node par node, ingestion, answering, CLI n8n, MCP
 ├── .claude/skills/                ← les 3 skills Claude Code (génériques)
-│   ├── interview-spec/
-│   ├── doubt-driven-dev/
-│   └── hostile-review/
-├── specs/                         ← specs écrites avec /interview-spec
-│   └── 2026-09-30-chatbot-epictete-rag.md
+│   ├── interview-spec/SKILL.md
+│   ├── doubt-driven-dev/SKILL.md
+│   └── hostile-review/SKILL.md
+├── specs/
+│   └── 2026-09-30-chatbot-epictete-rag.md   ← spec du chatbot (écrite avec /interview-spec)
 ├── projets/
-│   ├── 01_pmu_recap_weekend/
+│   ├── 01_pmu_recap_weekend/                ← premier projet
 │   │   ├── README.md
-│   │   ├── workflow_recap_weekend.json     ← à importer dans n8n
+│   │   ├── workflow_recap_weekend.json      ← à importer dans n8n
 │   │   └── tests/fixtures/
-│   └── 02_chatbot_epictete/
+│   └── 02_chatbot_epictete/                 ← PROJET PRINCIPAL
 │       ├── README.md
-│       ├── workflow_chatbot_epictete.json           ← à importer (Simple Vector Store)
-│       ├── workflow_chatbot_epictete_supabase.json  ← à importer (Supabase)
-│       ├── workflow_chatbot_epictete_hybride.json   ← à importer (Supabase + recherche hybride)
-│       ├── workflow_chatbot_epictete_answering.json ← à importer (hybride + Context → Routing → Search → Reranking → Generation)
-│       ├── supabase/setup.sql                       ← à exécuter une fois dans Supabase (table epictete_documents)
-│       ├── supabase/setup_hybride.sql               ← idem pour la version hybride (table epictete_chunks)
-│       ├── supabase/setup_answering.sql             ← en plus, pour la version answering (table epictete_conversations)
+│       ├── workflow_chatbot_epictete_answering.json   ← ★ version finale à importer
+│       ├── workflow_chatbot_epictete*.json            ← versions précédentes (Simple Vector Store, Supabase, hybride)
+│       ├── supabase/                        ← scripts SQL à exécuter dans Supabase
+│       ├── src/                             ← code des nodes Code (prompts inclus)
+│       ├── scripts/                         ← génération des workflows
+│       ├── tests/                           ← tests automatiques + fixtures
 │       ├── data/                            ← le livre (PDF + texte de référence)
-│       ├── src/                             ← code des nodes Code
-│       ├── scripts/                         ← génération du workflow
-│       └── tests/                           ← tests automatiques + fixtures
-├── tools/
-│   └── run-code-node.mjs          ← exécute un node Code n8n hors de n8n (partagé)
-└── package.json                   ← dépendances de test (luxon, pdfjs-dist, PGlite + pgvector)
+│       └── docs/versions_precedentes.md
+├── tools/run-code-node.mjs        ← exécute un node Code n8n hors de n8n (partagé)
+└── package.json                   ← scripts npm + dépendances de test
 ```
 
 ## Les skills Claude Code
 
-Skills **génériques**, réutilisables sur n'importe quel projet : il suffit de copier `.claude/skills/`. Dans Claude Code, on les lance dans cet ordre :
+Les skills sont **génériques** : on peut les réutiliser sur n'importe quel projet en copiant `.claude/skills/`. Dans Claude Code, on les lance dans cet ordre :
 
 | Skill | Rôle | Ce qu'il produit |
 |---|---|---|
-| **`/interview-spec`** | Explore l'existant, interviewe par petits lots, challenge les réponses vagues | Une spec `specs/*.md` : objectif, **affirmations vérifiables**, cas limites, hors périmètre |
-| **`/doubt-driven-dev`** | Implémente en doutant de chaque résultat : hypothèses listées et vérifiées, code exécuté sur des cas limites, diff relu comme celui d'un autre | Le code + un tableau honnête affirmation / statut / preuve |
-| **`/hostile-review`** | Attaque le projet pour le casser, idéalement via un sous-agent qui n'a pas écrit le code ; ne garde que ce qui est prouvé | Un rapport trié par gravité : scénario qui casse, preuve, correctif proposé |
+| **[`/interview-spec`](.claude/skills/interview-spec/SKILL.md)** | Explore l'existant, interviewe par petits lots, challenge les réponses vagues | Une spec `specs/*.md` : objectif, **affirmations vérifiables**, cas limites, hors périmètre |
+| **[`/doubt-driven-dev`](.claude/skills/doubt-driven-dev/SKILL.md)** | Implémente en doutant de chaque résultat : hypothèses vérifiées à la source, code exécuté sur des cas limites, tests de mutation | Le code + un tableau honnête affirmation / statut / preuve |
+| **[`/hostile-review`](.claude/skills/hostile-review/SKILL.md)** | Attaque le projet pour le casser, via un sous-agent qui n'a pas écrit le code ; ne garde que ce qui est prouvé | Un rapport trié par gravité : scénario, preuve, correctif proposé |
 
-Exemple concret : le [chatbot Épictète](projets/02_chatbot_epictete/#comment-il-a-été-construit-skills-du-repo) a été construit avec les 3 skills (11 affirmations, 3 pièges n8n évités, 6 problèmes trouvés par la revue hostile).
+**Appliqués au chatbot** : 4 versions, chacune spécifiée (30 affirmations au total), développée dans le doute puis attaquée par une revue hostile, dont 2 exécutées dans un vrai n8n. Le détail est dans la section [« Comment le projet a été construit »](projets/02_chatbot_epictete/README.md#7-comment-le-projet-a-été-construit).
 
 ## Tests
 
 ```bash
 npm install
-npm test                 # tests du chatbot Épictète (les 4 versions)
+npm test                  # 4 suites de tests du chatbot (structure, nodes Code, SQL réel, conversations)
+npm run build:chatbot     # régénère les workflows du chatbot à partir de src/
 ```
 
-Pour exécuter un node Code d'un workflow hors de n8n :
-
+Exécuter un node Code d'un workflow hors de n8n :
 ```bash
 node tools/run-code-node.mjs <workflow.json> "<Nom du node>" <input.json> [--ref "Node=fichier.json"] [--now 2026-09-28T09:30]
 ```

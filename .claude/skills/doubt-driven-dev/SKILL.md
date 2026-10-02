@@ -20,16 +20,22 @@ Implémenter au plus simple ce que demande la spec.
 - **Qu'est-ce qui casse si l'entrée est vide, nulle, en double, énorme, mal formée, ou arrive au mauvais moment ?**
 - **Qu'est-ce que ma modif touche d'autre ?** Appelants, références par nom, config, tests existants.
 - **Est-ce que je réponds à la spec, ou à ce que je crois être la spec ?** Reprendre chaque affirmation A1, A2…
+- **Est-ce que je touche à quelque chose qui est déjà validé ?** Si oui, le dire. Sinon, prouver que ça n'a pas bougé (comparer avant / après).
 
 ### 3. Vérifier — avec des preuves, pas des impressions
 - Lancer les vérifications du projet : tests, lint, typecheck, validation du format (ex : `jq empty fichier.json`).
 - Exécuter réellement le code modifié sur des données de test, **y compris les cas limites de la spec**. S'il n'existe pas de test, en écrire un petit ou un script jetable.
-- Vérifier chaque hypothèse de l'étape 2 : lire la doc ou la source, faire un appel réel si c'est possible.
+- Vérifier chaque hypothèse de l'étape 2 : lire la doc, faire un appel réel si c'est possible. Si la doc est inaccessible, **lire le code source officiel** : paquet npm, définitions de types, implémentation. Ne jamais écrire un nom de paramètre, de modèle ou de commande de mémoire.
+- Exécuter pour de vrai ce qui peut l'être, même hors de l'environnement cible : SQL sur une base locale, code extrait de son contexte, outil réel en local.
+- **Prouver que les tests savent échouer** (tests de mutation) : casser volontairement le code (retirer une condition, changer une borne) et vérifier qu'un test passe au rouge. Un test qui reste vert est un trou à combler.
 - Ce qui ne peut pas être testé ici (service externe, envoi réel, UI) : le dire explicitement et donner à l'utilisateur le test manuel exact à faire, avec ce qu'il doit observer.
 
 ### 4. Critiquer
 Relire son diff comme si quelqu'un d'autre l'avait écrit. Chercher : code mort, cas oublié, comportement changé sans le vouloir, secret ou placeholder laissé, sur-ingénierie.
+Relire aussi la **documentation** : chaque chiffre, nom ou commande écrit dans le README doit correspondre au code réel.
 S'il reste un doute, retour à l'étape 1.
+
+Quand l'utilisateur teste et qu'un problème apparaît : **d'abord le reproduire dans un test**, ensuite seulement corriger.
 
 ## Rendu à l'utilisateur
 

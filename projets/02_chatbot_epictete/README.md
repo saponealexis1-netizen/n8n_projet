@@ -1,379 +1,186 @@
 # 📖 Chatbot RAG - Manuel d'Épictète (n8n)
 
-Chatbot n8n qui répond aux questions sur **le Manuel d'Épictète** (*The Enchiridion*, trad. Elizabeth Carter, 52 chapitres), **uniquement à partir du livre**, en citant les chapitres. Il répond dans la langue de la question et refuse ce qui n'est pas dans le livre.
+Chatbot n8n qui répond aux questions sur **le Manuel d'Épictète** (*The Enchiridion*, trad. Elizabeth Carter, 1758, 52 chapitres) **uniquement à partir du livre**, en **citant les chapitres**, dans la langue de la question. Il comprend les questions de suite (« et le chapitre suivant ? ») et refuse poliment ce qui n'est pas dans le livre.
 
-✅ **Validé dans n8n**, dans les 4 versions : ingestion des 56 chunks et réponses du chat.
+✅ **Validé dans n8n + Supabase** (version finale : nodes Google Gemini natifs, toutes les étapes vertes).
 
-| Version | Base vectorielle | Persistance | Fichier |
-|---|---|---|---|
-| Simple Vector Store | En mémoire dans n8n | Perdue au redémarrage de n8n | `workflow_chatbot_epictete.json` |
-| **Supabase** | Table Postgres + pgvector | Permanente, visible dans Supabase | `workflow_chatbot_epictete_supabase.json` |
-| **Hybride** | Supabase + recherche **vecteurs + mots-clés** | Permanente | `workflow_chatbot_epictete_hybride.json` |
-| **Answering** | Hybride + pipeline de réponse **Context → Routing → Search → Reranking → Generation** | Permanente (+ historique des conversations) | `workflow_chatbot_epictete_answering.json` |
-
-- Spec : [`specs/2026-09-30-chatbot-epictete-rag.md`](../../specs/2026-09-30-chatbot-epictete-rag.md)
-- Workflow à importer : [`workflow_chatbot_epictete.json`](workflow_chatbot_epictete.json)
-- Livre à envoyer dans le formulaire : [`data/enchiridion.pdf`](data/enchiridion.pdf)
-
-## Le workflow
-
-Un seul workflow en deux parties. Elles doivent rester ensemble, car le Simple Vector Store range ses données sous une clé préfixée par l'ID du workflow.
-
-```
-INGESTION
-Formulaire (PDF) → Extraire le texte du PDF → Nettoyage → Chunking → Augmentation → Vectorisation (Simple Vector Store)
-                                                                                    ↑ Embeddings Gemini  ↑ Chargeur de documents ← Pas de re-découpage
-CHAT
-Chat → Agent Épictète ← Google Gemini Chat Model
-                      ← Mémoire de la conversation
-                      ← Recherche dans le livre (Simple Vector Store) ← Embeddings Gemini
-```
-
-| Étape RAG | Node | Ce qu'il fait |
-|---|---|---|
-| Extraction | Extraire le texte du PDF | PDF → texte brut |
-| Nettoyage | Nettoyage (Code) | Retire le menu du site, les en-têtes/pieds de page du navigateur (lignes répétées au bord des pages), les URL, les numéros de page, « THE END », © ; recolle les lignes coupées ; 1 ligne par chapitre |
-| Chunking | Chunking (Code) | 1 chunk par chapitre ; les chapitres de plus de ~350 mots sont recoupés entre deux phrases (24 et 29 en 2 parties, 33 en 3) → **56 chunks**. Vérifie qu'il y a exactement 52 chapitres, sinon arrête tout en indiquant le chapitre manquant |
-| Augmentation | Augmentation (Code) | Ajoute l'en-tête « Enchiridion – Chapter N » au texte + métadonnées `chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots` |
-| Vectorisation | Simple Vector Store (insert) | Embeddings Gemini, clé `enchiridion`, base vidée avant chaque nouvel envoi (pas de doublons) |
-| Recherche | Recherche dans le livre | Les 4 passages les plus proches, utilisés par l'agent comme outil |
-| Réponse | Agent Épictète | Gemini + mémoire des 10 derniers échanges ; consignes : chercher d'abord, citer les chapitres, ne rien inventer |
-
-## Modèles (config validée dans n8n)
-
-| Node | Modèle |
+| | |
 |---|---|
-| Google Gemini Chat Model | `models/gemini-flash-lite-latest` |
-| Embeddings Google Gemini (ingestion) | `models/gemini-embedding-2` |
-| Embeddings Google Gemini (chat) | `models/gemini-embedding-2` |
+| **Workflow à importer** | [`workflow_chatbot_epictete_answering.json`](workflow_chatbot_epictete_answering.json) |
+| **SQL à exécuter dans Supabase** | [`supabase/setup_hybride.sql`](supabase/setup_hybride.sql) puis [`supabase/setup_answering.sql`](supabase/setup_answering.sql) |
+| **Livre à envoyer dans le formulaire** | [`data/enchiridion.pdf`](data/enchiridion.pdf) |
+| **Explication détaillée, node par node, avec exemples** | [`FICHE_RECAP.md`](../../FICHE_RECAP.md) |
+| **Spec** (objectifs + affirmations vérifiables) | [`specs/2026-09-30-chatbot-epictete-rag.md`](../../specs/2026-09-30-chatbot-epictete-rag.md) |
+| **Versions précédentes** (Simple Vector Store, Supabase, hybride) | [`docs/versions_precedentes.md`](docs/versions_precedentes.md) |
 
-- `gemini-2.5-flash`, prévu au départ, renvoie **404 aux nouveaux utilisateurs** : Google l'a fermé.
-- ⚠️ **Les 2 nodes d'embeddings doivent utiliser le même modèle.** Les vecteurs de deux modèles différents ne sont pas comparables : le chat ne trouverait plus rien.
-- ⚠️ **Après tout changement de modèle d'embeddings, il faut réindexer le PDF.**
+---
 
-## Installation dans n8n
+## 1. Vue d'ensemble
 
-1. **Workflows → Import from File** → `workflow_chatbot_epictete.json`
-2. Créer une clé API gratuite sur https://aistudio.google.com/apikey (ne jamais la mettre sur GitHub).
-3. Ouvrir **Embeddings Google Gemini (ingestion)** → *Credential* → *Create new credential* → coller la clé → *Save*.
-4. Sélectionner ce même credential dans **Embeddings Google Gemini (chat)** et **Google Gemini Chat Model**.
-5. Enregistrer le workflow (Ctrl+S).
+Un seul workflow, en **3 parties** :
 
-## Utilisation
+```
+① INGESTION      Formulaire (PDF) → Extraire → Nettoyage → Chunking → Augmentation → Mots-clés → Limit (100) → Vectoriser (sous-workflow)
+② SOUS-WORKFLOW  Sous-workflow : indexer → Préparer les embeddings → Embedding des chunks (HTTP Gemini) → Préparer les lignes → Enregistrer dans Supabase (SQL)
+③ CHAT           1. Input
+                  → 2. Context    : historique (SQL) → construire
+                  → 3. Routing    : Gemini → lire la décision → chercher dans le livre ?
+                        ├─ oui → 4. Search     : embedding de la requête (HTTP Gemini) → recherche hybride (SQL, 10 candidats)
+                        │        5. Reranking  : préparer → Gemini (note 0-10) → garder les meilleurs (≤ 4)
+                        │        6. Generation : Gemini → réponse
+                        └─ non → Réponse directe (sans recherche)
+                  → 7. Sauvegarder l'échange (SQL) → la réponse s'affiche dans le chat
+```
 
-### 1. Indexer le livre
-Cliquer sur le **bouton orange « Execute workflow » collé à gauche du node Formulaire**.
+**Les outils**
+| Outil | Rôle |
+|---|---|
+| **n8n** | Orchestration : 28 nodes, tous les détails dans la [fiche récap](../../FICHE_RECAP.md#partie-1--le-flow-node-par-node) |
+| **Gemini** `gemini-embedding-2` | Transforme un texte en **vecteur** (3072 nombres = son sens), via HTTP Request |
+| **Gemini** `gemini-flash-lite-latest` | Routing, reranking et génération, via le **node Google Gemini natif** |
+| **Supabase** (Postgres + pgvector) | Stocke les chunks et l'historique ; fait la **recherche hybride** en SQL |
 
-⚠️ N'utilise pas « Test step » dans le node Formulaire : il n'exécute que le formulaire, **rien n'est indexé**, et le message de succès s'affiche quand même.
-
-Envoyer `data/enchiridion.pdf` dans le formulaire qui s'ouvre, puis attendre que toute la ligne du haut soit verte. Chunking, Augmentation et Vectorisation doivent afficher **56 items**.
-
-### 2. Poser des questions
-Cliquer sur **Open chat**, puis par exemple :
-- « Qu'est-ce qui dépend de nous ? » → répond à partir du chapitre 1 ;
-- « What does Epictetus say about death? » → répond en anglais ;
-- « Quelle est la capitale du Japon ? » → « je ne trouve pas cette information dans le Manuel ».
-
-## Limites connues
-
-| Limite | Conséquence | Que faire |
+**Les tables Supabase**
+| Table | Contenu | Remplie par |
 |---|---|---|
-| Le Simple Vector Store est en mémoire | Après un redémarrage de n8n, la base est vide | Réindexer le PDF, ou utiliser la version Supabase |
-| La base est vidée **avant** le calcul des embeddings | Si Gemini échoue pendant une réindexation (quota 429, clé invalide), l'ancien livre est perdu | Réindexer une fois l'erreur passée |
-| Le formulaire n'affiche pas le détail des erreurs | Avec un mauvais PDF, il affiche « Problem submitting response » | Le message exact (« 30 chapitres trouvés au lieu de 52… ») est dans **Executions** |
-| n8n en mode queue (plusieurs workers) | Chaque worker a sa propre mémoire : le chat peut ne rien trouver | Utiliser un vector store persistant (Supabase) |
-| Recherche par numéro (« le chapitre suivant ») | La recherche est sémantique, elle peut ramener un autre chapitre | Poser une question sur le contenu plutôt que sur le numéro |
+| `epictete_chunks` | 56 chunks : `chapitre`, `partie`, `content`, `mots_cles`, `metadata`, `embedding` (vecteur), `fts` (index de mots) | L'ingestion |
+| `epictete_conversations` | Historique : `session_id`, `question`, `reponse`, `route`, `requete`, `chapitres` | Le chat |
 
-## Comment il a été construit (skills du repo)
+---
 
-1. **`/interview-spec`** : choix validés (chunking par chapitre, augmentation par métadonnées, langue de la question, agent avec mémoire) et spec avec **11 affirmations vérifiables**.
-2. **`/doubt-driven-dev`** : chaque hypothèse a été vérifiée dans le **code source de n8n 2.41.3** (types et versions des nodes, paramètres, extraction PDF). Trois pièges évités :
-   - en v1 du Simple Vector Store, « Clear Store » vide la base **avant chaque chunk** : le workflow utilise la v1.1 ;
-   - le découpage « simple » du chargeur de documents recoupe tout à 1 000 caractères : remplacé par un splitter qui ne recoupe pas ;
-   - l'extraction PDF de n8n **perd les paragraphes** : les chapitres longs sont coupés entre deux phrases.
+## 2. Comment ça marche
 
-   Les tests repèrent bien les erreurs : 6 cassages volontaires du code ont tous été détectés.
-3. **`/hostile-review`** (sous-agent indépendant) : 6 problèmes trouvés.
-   - 3 corrigés et testés : le filtre des en-têtes supprimait du texte en mise en page étroite ; les traits d'union étaient perdus ; un « 12. » seul sur sa ligne faisait échouer l'ingestion avec un message trompeur.
-   - 3 documentés ci-dessus : « Test step » n'indexe rien, erreur générique dans le formulaire, base vidée avant les embeddings.
+### L'ingestion : transformer le PDF en base de connaissances (une fois)
+| Étape | Ce qui se passe | Exemple |
+|---|---|---|
+| **Extraction** | PDF → texte brut | Texte avec en-têtes de navigateur, URL, lignes coupées |
+| **Cleaning** | On retire tout ce qui n'est pas le livre, on recolle les lignes | 1 ligne propre par chapitre |
+| **Chunking** | 1 chunk par chapitre, les chapitres longs sont coupés entre deux phrases. Contrôle : exactement 52 chapitres | **56 chunks** (le chapitre 33 en donne 3) |
+| **Augmentation** | En-tête « Enchiridion – Chapter N », métadonnées, **8 mots-clés** | Chapitre 49 → `chrysippus, understand, interpret…` |
+| **Vectorisation** | Gemini calcule un vecteur par chunk ; tout est enregistré **en une transaction** | 56 lignes dans `epictete_chunks` |
 
-## Fichiers
+### L'answering : répondre à une question
+| Étape | Ce qui se passe | Exemple avec « Et le chapitre suivant ? » (après une question sur le chapitre 8) |
+|---|---|---|
+| **1. Input** | La question et l'identifiant de la conversation | `chatInput`, `sessionId` |
+| **2. Context** | Les 3 derniers échanges de la conversation | `[chapitres utilisés : 8]` |
+| **3. Routing** | Gemini décide : `livre` / `conversation` / `hors_sujet`, et réécrit la question en requête anglaise autonome | `route: livre`, `requete: "Enchiridion – Chapter 9"` |
+| **4. Search** | Recherche **hybride** : sens (vecteurs) + mots exacts (plein texte), fusionnés (RRF) → 10 candidats | Les parties du chapitre 9 en tête |
+| **5. Reranking** | Gemini note chaque candidat de 0 à 10 ; on garde au plus 4 passages notés ≥ 5 | Chapitre 9 gardé |
+| **6. Generation** | Gemini répond **uniquement** avec ces passages, en citant les chapitres | « … (Chapitre 9) » |
+| **7. Sauvegarde** | L'échange est enregistré : c'est le contexte de la question suivante | 1 ligne dans `epictete_conversations` |
+
+« Merci » ou une question hors sujet → **réponse directe**, sans recherche : 1 seul appel Gemini au lieu de 4.
+
+---
+
+## 3. Installation (depuis zéro)
+
+**Prérequis** : un compte n8n, un projet Supabase et une clé API Gemini gratuite ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)). Ne mets jamais la clé sur GitHub.
+
+1. **Supabase → SQL Editor** : exécuter [`supabase/setup_hybride.sql`](supabase/setup_hybride.sql), puis [`supabase/setup_answering.sql`](supabase/setup_answering.sql). Les deux scripts peuvent être relancés sans risque.
+2. **n8n → Workflows → Import from File** → `workflow_chatbot_epictete_answering.json`.
+3. **Credentials** :
+   - **Google Gemini (PaLM) API** dans les 3 nodes **Google Gemini** (*3. Routing*, *5. Reranking*, *6. Generation*) et les 2 **HTTP Request** d'embedding (*Embedding des chunks*, *4. Search : embedding de la requête*) ;
+   - **Postgres** dans les 4 nodes SQL. Dans Supabase → **Connect** → **Session pooler** : host `aws-….pooler.supabase.com`, port `5432`, base `postgres`, utilisateur `postgres.<ref>`, mot de passe de la base, SSL activé.
+4. **Ctrl+S**. Inutile de publier.
+5. **Indexer le livre** : cliquer sur le **bouton orange « Execute workflow » à gauche du Formulaire** (pas « Test step »), puis envoyer `data/enchiridion.pdf`. Supabase → `epictete_chunks` doit montrer **56 lignes**.
+6. **Open chat** et poser une question.
+
+## 4. Démo : 5 questions qui montrent chaque étape
+| Question | Ce qu'elle montre |
+|---|---|
+| « Que dit le chapitre 8 ? » | Routing (chapitre détecté) + recherche par chapitre |
+| « Et le chapitre suivant ? » | **Context** : le chapitre 9 est trouvé grâce à l'historique |
+| « What does Epictetus say about Chrysippus? » | Recherche par **mots-clés** (chapitre 49) + réponse en anglais |
+| « Comment rester calme quand on m'insulte ? » | Recherche **sémantique** : aucun mot en commun avec le livre |
+| « Merci ! » puis « Quelle est la capitale du Japon ? » | **Réponse directe** et refus hors sujet, sans recherche |
+
+Dans **Executions**, chaque étape montre ce qu'elle a décidé : la route, la requête réécrite, les 10 candidats, les notes du reranking, les passages gardés.
+
+## 5. Si ça coince
+| Situation | Cause / solution |
+|---|---|
+| Triangle rouge sur un node | Credential non sélectionné dans ce node |
+| Le formulaire dit « succès » mais `epictete_chunks` est vide | « Test step » a été utilisé au lieu du bouton orange « Execute workflow » (étape 5) |
+| Le formulaire affiche « Problem submitting response » | Mauvais PDF : le message exact (« 30 chapitres trouvés au lieu de 52… ») est dans **Executions** |
+| `404` sur un appel Gemini | Nom de modèle indisponible pour ta clé : choisir un modèle dans la liste du node (texte) ou corriger `MODELE` dans « Préparer les embeddings » **et** l'URL de « 4. Search : embedding » (embeddings), puis réindexer |
+| `expected 3072 dimensions, not N` | Le modèle d'embeddings produit N valeurs : remplacer 3072 par N dans `setup_hybride.sql`, `drop table epictete_chunks;`, relancer le script, réindexer |
+| Quota Gemini (429) / Gemini surchargé (503) | Chaque appel du chat réessaie 3 fois à 5 s d'intervalle ; sinon attendre une minute |
+| Le chat ne trouve rien | Table vide (réindexer) ou modèle d'embeddings différent entre ingestion et recherche |
+
+## 6. Limites connues
+- **Une seule langue de recherche** : le livre est en anglais. Le routing traduit la requête en anglais, et la réponse est rédigée dans la langue de la question.
+- **Historique** : `epictete_conversations` garde tout. Pour purger : `delete from epictete_conversations where created_at < now() - interval '30 days';`.
+- **Coût** : 4 appels Gemini par question sur le livre. Le reranking est appelé même si la recherche ne trouve rien (table vide).
+- **Pourquoi autant de nodes** : chaque étape demandée a son node, et les petits nodes Code rendent chaque décision visible dans *Executions*. L'allègement utile : passer de 10 à 6 candidats dans « 4. Search : recherche hybride (SQL) ».
+- **Pourquoi les embeddings restent en HTTP** : n8n n'a pas de node Gemini qui renvoie un vecteur. Le node natif ne fait pas d'embeddings, et le sous-node « Embeddings Google Gemini » ne se branche que sur un vector store.
+
+---
+
+## 7. Comment le projet a été construit
+
+**4 versions**, chacune ajoutant une brique (détails : [`docs/versions_precedentes.md`](docs/versions_precedentes.md)) :
+
+| # | Version | Ce qu'elle apporte | Statut |
+|---|---|---|---|
+| 1 | Simple Vector Store | Ingestion RAG complète + agent Gemini, base en mémoire | ✅ validée |
+| 2 | Supabase | Base persistante (pgvector) | ✅ validée |
+| 3 | Hybride | Flow du prof (Limit, sous-workflow, HTTP, SQL) + recherche vecteurs + mots-clés | ✅ validée |
+| 4 | **Answering** | Pipeline explicite Context → Routing → Search → Reranking → Generation, nodes Gemini natifs | ✅ **validée, version finale** |
+
+Chaque évolution a suivi les **3 skills du repo** ([`.claude/skills/`](../../.claude/skills/)) :
+1. **`/interview-spec`** : questions à choix et spec avec des **affirmations vérifiables** (A1-A11, S1-S5, H1-H7, R1-R7).
+2. **`/doubt-driven-dev`** :
+   - chaque hypothèse est vérifiée dans le **code source de n8n 2.41.3** (la doc était inaccessible) ;
+   - le SQL est **réellement exécuté** sur Postgres + pgvector ;
+   - les **tests de mutation** prouvent que les tests savent échouer.
+3. **`/hostile-review`** : un sous-agent indépendant attaque chaque version, à partir de la version hybride **dans un vrai n8n 2.41.3**. Aucun bloquant n'est resté non traité.
+
+**Exemples de pièges évités grâce à cette méthode :**
+- la v1 du Simple Vector Store vidait la base **avant chaque chunk** ;
+- le découpage « simple » de n8n aurait recoupé les chapitres ;
+- un premier SQL refusé par Postgres (colonne calculée « non immuable ») a été corrigé avant d'être livré ;
+- une notation de reranking mal formée effaçait tous les passages ;
+- le modèle `gemini-2.5-flash` était fermé aux nouveaux utilisateurs.
+
+---
+
+## 8. Fichiers
 
 | Fichier | Rôle |
 |---|---|
-| `workflow_chatbot_epictete.json` | **Le workflow à importer** : version Simple Vector Store (généré, ne pas modifier à la main) |
-| `workflow_chatbot_epictete_supabase.json` | **Version Supabase** (générée par le même script) |
-| `supabase/setup.sql` | Script SQL à exécuter une fois dans Supabase (version Supabase) |
-| `workflow_chatbot_epictete_hybride.json` | **Version hybride** (générée par le même script) |
-| `supabase/setup_hybride.sql` | Script SQL de la version hybride (table `epictete_chunks`, réindexation, recherche hybride) |
-| `workflow_chatbot_epictete_answering.json` | **Version answering** (générée par le même script) |
-| `supabase/setup_answering.sql` | Script SQL de la version answering (table `epictete_conversations`) |
-| `src/8_contexte.js` … `13_reponse_directe.js` | Code des nodes Code du pipeline d'answering (prompts inclus) |
-| `src/4_mots_cles.js` … `7_formater_passages.js` | Code des nodes Code de la version hybride |
-| `src/1_nettoyage.js`, `2_chunking.js`, `3_augmentation.js` | Code des 3 nodes Code |
-| `scripts/build-workflow.mjs` | Régénère les 4 JSON à partir de `src/` |
+| **`workflow_chatbot_epictete_answering.json`** | **Le workflow final à importer** (généré : ne pas modifier à la main) |
+| `workflow_chatbot_epictete.json`, `_supabase.json`, `_hybride.json` | Versions précédentes (voir `docs/`) |
+| `supabase/setup_hybride.sql` | Table `epictete_chunks`, fonctions `epictete_reindexer` et `epictete_recherche_hybride` |
+| `supabase/setup_answering.sql` | Table `epictete_conversations`, fonctions `epictete_historique` et `epictete_sauvegarder_echange` |
+| `supabase/setup.sql` | SQL de la version 2 (Supabase) |
+| `src/1_nettoyage.js` … `3_augmentation.js` | Nodes Code de l'ingestion (toutes versions) |
+| `src/4_mots_cles.js` … `7_formater_passages.js` | Nodes Code des mots-clés, embeddings et lignes SQL (versions 3-4) |
+| `src/8_contexte.js` … `13_reponse_directe.js` | Nodes Code du pipeline d'answering, **prompts inclus** |
+| `scripts/build-workflow.mjs` | Génère les 4 JSON à partir de `src/` |
 | `scripts/decouper.mjs` | Régénère le texte de référence `data/enchiridion.json` / `.csv` |
-| `tests/test.mjs` | Tests automatiques (structure, nettoyage, chunking, augmentation, cas d'erreur) |
-| `tests/test_supabase.mjs` | Tests de la version Supabase (structure + SQL exécuté sur Postgres/pgvector) |
-| `tests/test_hybride.mjs` | Tests de la version hybride (structure, nodes Code, SQL hybride) |
-| `tests/test_answering.mjs` | Tests de la version answering (structure, routing, reranking, conversations complètes) |
+| `tests/test.mjs`, `test_supabase.mjs`, `test_hybride.mjs`, `test_answering.mjs` | Tests automatiques des 4 versions |
 | `tests/extraire_comme_n8n.mjs` | Extrait un PDF exactement comme n8n (pdf.js 5.4.296 + même `parseText`) |
-| `tests/fixtures/` | Textes extraits de PDF de test : livre, version navigateur avec menus/en-têtes, mise en page étroite, autre livre, vide, tronqué, chapitre manquant… |
+| `tests/fixtures/` | Textes extraits de PDF de test : livre, version navigateur, mise en page étroite, autre livre, vide, tronqué… |
 | `data/enchiridion.pdf` | Le livre à envoyer dans le formulaire |
 | `data/enchiridion_source.txt`, `.json`, `.csv` | Texte de référence, 1 passage par chapitre |
+| `docs/versions_precedentes.md` | Documentation des versions 1 à 3 |
 
-## Développer
+## 9. Développer
 
 Depuis la racine du repo :
-
 ```bash
-npm install                        # une fois
-npm run build:chatbot              # après toute modif dans src/
-npm test                           # doit finir par ✅ Tous les tests passent
+npm install                 # une fois
+npm run build:chatbot       # régénère les 4 JSON après une modif dans src/
+npm test                    # 4 suites de tests ; doit finir par « ✅ Tous les tests … passent »
 ```
 
-## Version Supabase (base persistante)
-
-✅ **Validé dans n8n et Supabase.**
-
-Fichier : [`workflow_chatbot_epictete_supabase.json`](workflow_chatbot_epictete_supabase.json). C'est le même workflow, seuls les 2 vector stores passent sur **Supabase**. Le livre survit aux redémarrages de n8n et les chunks sont visibles dans Supabase.
-
-```
-… Augmentation → Vider la table epictete_documents (Postgres, TRUNCATE, 1 seule fois) → Reprendre les chunks → Vectorisation (Supabase)
-Chat → Agent ← … ← Recherche dans le livre (Supabase) ← Embeddings Gemini
-```
-
-La table et la fonction ont des **noms dédiés** (`epictete_documents`, `match_epictete_documents`). Le workflow **vide cette table à chaque indexation**, et ces noms garantissent qu'il ne touchera jamais une table `documents` créée par un autre tutoriel dans le même projet Supabase.
-
-### La table `epictete_documents`
-
-C'est la **mémoire du chatbot** : les 56 chunks du livre, chacun avec son vecteur. C'est là que le chat cherche les passages pertinents avant de répondre.
-
-| Colonne | Type | Contenu | Rempli par |
-|---|---|---|---|
-| `id` | `bigserial` | Numéro de ligne, de 1 à 56 (automatique) | Postgres |
-| `content` | `text` | Texte du chunk, précédé de « Enchiridion – Chapter N » | Node Augmentation |
-| `metadata` | `jsonb` | `chapitre`, `partie`, `livre`, `traduction`, `source`, `nb_mots` | Chargeur de documents |
-| `embedding` | `vector(3072)` | Le **sens** du texte, en 3072 nombres | Embeddings Gemini |
-
-- **Indexation** : la table est vidée, puis Gemini calcule un vecteur par chunk et n8n insère les 56 lignes.
-- **Question** : Gemini transforme la question en vecteur, puis la fonction `match_epictete_documents` renvoie les 4 chunks les plus proches en sens, avec un score de similarité. L'agent répond à partir de ces chunks en citant les chapitres.
-
-Pour voir le contenu dans le SQL Editor :
-```sql
-select id, metadata->>'chapitre' as chapitre, metadata->>'partie' as partie, left(content, 80) as debut
-from epictete_documents order by id;
-```
-
-### Mise en place (une seule fois)
-1. **Supabase → SQL Editor → New query** : coller [`supabase/setup.sql`](supabase/setup.sql) → **Run**. Ça crée l'extension `vector`, la table `epictete_documents` (avec RLS activé) et la fonction `match_epictete_documents`.
-2. **n8n → Import from File** → `workflow_chatbot_epictete_supabase.json`.
-3. Créer et sélectionner les credentials :
-   - **Google Gemini** dans les 3 nodes Google ;
-   - **Supabase API** dans **Vectorisation (Supabase)** et **Recherche dans le livre**. Host = URL du projet (`https://<ref>.supabase.co`), clé = **service_role / secret**, jamais la clé anon ;
-   - **Postgres** dans **Vider la table epictete_documents**. Dans Supabase → **Connect** → **Session pooler**, recopier : host `aws-….pooler.supabase.com`, port `5432`, database `postgres`, user `postgres.<ref>`, le mot de passe de la base, SSL activé. La connexion directe `db.<ref>.supabase.co` ne marche qu'en IPv6 : à éviter.
-4. Vérifier les modèles : `models/gemini-flash-lite-latest` et `models/gemini-embedding-2` (×2). Enregistrer.
-
-### Utilisation
-Exactement comme la version Simple Vector Store : bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF → **Open chat**. Dans Supabase, **Table Editor → epictete_documents** doit montrer **56 lignes**. Une réindexation les remplace sans doublons.
-
-⚠️ **Une indexation à la fois** : deux envois du formulaire en même temps (double clic) peuvent créer des doublons. Dans ce cas, réindexer une fois.
-
-⚠️ **Si l'indexation échoue après le vidage** (quota Gemini 429, clé invalide), la table reste vide et le chat répond « je ne trouve pas ». Il suffit de relancer l'indexation.
-
-### Si ça coince
-| Erreur | Cause | Solution |
-|---|---|---|
-| `expected X dimensions, not Y` | La table a été créée pour des vecteurs de X valeurs, le modèle en produit Y | Dans `setup.sql`, remplacer `3072` par **Y** (table + fonction), exécuter `drop table if exists epictete_documents; drop function if exists match_epictete_documents;` puis relancer le script, puis réindexer |
-| `relation "public.epictete_documents" does not exist` | `setup.sql` n'a pas été exécuté | Étape 1 |
-| `Could not find the function public.match_epictete_documents` | Fonction absente | Relancer `setup.sql` |
-| `cannot change return type of existing function` | Une ancienne version de la fonction existe avec d'autres colonnes | `drop function if exists match_epictete_documents;` puis relancer `setup.sql` |
-| Le node Postgres n'arrive pas à se connecter | Connexion directe IPv6 ou mauvais user | Utiliser le **Session pooler** (étape 3) |
-| `new row violates row-level security policy` | Credential Supabase avec la clé anon | Utiliser la clé **service_role** |
-| Le chat ne trouve rien | Table vide, ou modèle d'embeddings différent entre ingestion et chat | Réindexer ; même modèle dans les 2 nodes |
-
-Pour vérifier la taille des vecteurs dans Supabase : `select vector_dims(embedding) from epictete_documents limit 1;` → `3072`.
-
-### Vérifié hors n8n
-- `setup.sql` a été exécuté sur PostgreSQL 18 + pgvector 0.8.1 (PGlite), et peut être relancé sans erreur.
-- Insertion des 56 chunks exactement comme LangChain (le code utilisé par n8n), puis recherche, filtre et réindexation sans doublons.
-- Erreur explicite en cas de mauvaise taille de vecteur. RLS est activé.
-- Une table `documents` d'un autre projet n'est jamais touchée.
-- JSON : ordre des nodes, TRUNCATE exécuté une seule fois, même table des deux côtés, autres nodes identiques à la version validée.
-- Revue hostile (sous-agent) : aucun bloquant. Les 6 problèmes trouvés sont corrigés ou documentés ci-dessus.
-
-Pour lancer ces tests : `npm test` (voir « Développer »).
-
-## Version hybride (vecteurs + mots-clés)
-
-✅ **Validé dans n8n et Supabase** : 56 lignes dans `epictete_chunks` (mots-clés, vecteurs, index plein texte), et « que dit le chapitre 8 ? » répond avec le chapitre 8.
-
-Fichier : [`workflow_chatbot_epictete_hybride.json`](workflow_chatbot_epictete_hybride.json) · SQL : [`supabase/setup_hybride.sql`](supabase/setup_hybride.sql). Construite sur le modèle du flow présenté par le prof.
-
-```
-INGESTION      Formulaire → Extraire → Nettoyage → Chunking → Augmentation → Mots-clés → Limit (100) → Vectoriser (sous-workflow)
-SOUS-WORKFLOW  Déclencheur → Rechercher ? ─ non → Préparer les embeddings → Embedding des chunks (HTTP Gemini) → Préparer les lignes → Enregistrer (SQL)
-                                          └ oui → Embedding de la question (HTTP Gemini) → Recherche hybride (SQL) → Formater les passages
-CHAT           Chat → Agent Épictète ← Gemini Chat Model + Mémoire + outil « Recherche hybride dans le livre » (appelle le sous-workflow)
-```
-
-### Ce qui change par rapport à la version Supabase
-| | Version Supabase | Version hybride |
-|---|---|---|
-| Recherche | Sens seulement (vecteurs) | **Sens + mots-clés**, fusionnés |
-| Embeddings | Nodes LangChain | **HTTP Request** direct vers l'API Gemini (comme le prof) |
-| Écriture en base | Node Supabase Vector Store | **SQL** (fonction `epictete_reindexer`) |
-| Colonne mots-clés | — | **`mots_cles`** : 8 mots par chunk |
-| Réindexation | Vider puis insérer (table vide si Gemini échoue) | **Atomique** : une seule transaction, l'ancien contenu reste en cas d'erreur |
-
-### La recherche hybride, simplement
-- **Recherche sémantique** (vecteurs) : trouve les passages **de même sens**, même avec d'autres mots, dans une autre langue.
-- **Recherche par mots-clés** (plein texte Postgres) : trouve les **mots exacts**, comme « Chrysippus », « Olympic » ou « Diogenes ». Elle porte sur la colonne `mots_cles` (poids fort) et sur le texte (poids normal).
-- **Fusion (RRF, Reciprocal Rank Fusion)** : chaque passage reçoit `1/(60 + rang sémantique) + 1/(60 + rang mots-clés)`. Un passage bien classé par les deux méthodes passe devant ; un passage trouvé par une seule méthode reste candidat. On garde les 4 meilleurs.
-
-Exemple (testé) : « Chrysippus » + le sens du chapitre 1 → le chapitre 49 remonte grâce au mot exact, et le chapitre 1 grâce au sens.
-
-- **Question sur un chapitre précis** (« Chapter 8 », « chapitre 8 ») : les parties de ce chapitre passent **en tête**, dans l'ordre du texte. L'en-tête « Enchiridion – Chapter N » n'est volontairement **pas** dans l'index plein texte : sinon le mot « chapter » correspondrait aux 56 chunks et fausserait le classement.
-- **Deux indexations en même temps** (double clic) : la seconde attend la fin de la première (verrou SQL), donc pas de doublons.
-
-### Le Limit (100)
-- C'est la **borne haute du prof** (10 à 100 chunks), et aussi le **maximum de textes par appel** `batchEmbedContents` de Gemini. Nos 56 chunks passent donc tous, en **un seul appel**.
-- C'est un **garde-fou** : un PDF qui produirait des centaines de chunks ne ferait pas exploser le quota.
-- Pour tester sans consommer de quota, le mettre à **3**. ⚠️ La table ne contiendra alors que 3 chunks : remettre **100** et réindexer avant d'utiliser le chat.
-- Au-delà de 100 chunks, le Limit couperait sans prévenir. Pour ce livre, c'est impossible : le Chunking exige exactement 52 chapitres, ce qui donne 56 chunks.
-
-### La table `epictete_chunks`
-| Colonne | Contenu |
-|---|---|
-| `id` | Numéro de ligne (automatique) |
-| `chapitre`, `partie` | Position dans le livre |
-| `content` | « Enchiridion – Chapter N » + texte du chunk |
-| **`mots_cles`** | Les 8 mots les plus importants du chunk (ex. ch49 : `chrysippus, understand, interpret, …`) |
-| `metadata` | Livre, traduction, source, nombre de mots |
-| `embedding` | Vecteur Gemini (3072 nombres) |
-| `fts` | Index plein texte (mots-clés + texte), calculé à l'insertion |
-
-### Mise en place
-1. **Supabase → SQL Editor** : coller [`supabase/setup_hybride.sql`](supabase/setup_hybride.sql) → **Run**. Ça crée la table `epictete_chunks` et les fonctions `epictete_reindexer` et `epictete_recherche_hybride`. Les tables des autres versions ne sont pas touchées.
-2. **n8n → Import from File** → `workflow_chatbot_epictete_hybride.json`.
-3. Credentials :
-   - **Google Gemini** dans **Google Gemini Chat Model**, **Embedding de la question (Gemini)** et **Embedding des chunks (Gemini)**. Dans les 2 HTTP Request, l'authentification « Google Gemini(PaLM) Api » est déjà choisie : il suffit de sélectionner ton credential ;
-   - **Postgres** (Session pooler) dans **Recherche hybride (SQL)** et **Enregistrer dans Supabase (SQL)**.
-4. ⚠️ **Enregistrer (Ctrl+S) puis PUBLIER le workflow** (bouton **Publish** en haut à droite). L'outil de l'agent appelle toujours la version **publiée** du workflow, même en test depuis l'éditeur. Sans publication, le chat répond « je ne trouve pas » : dans *Executions*, l'outil affiche `Workflow is not active and cannot be executed`.
-5. Bouton orange **« Execute workflow »** du Formulaire → envoyer le PDF. Supabase → `epictete_chunks` doit montrer **56 lignes**, avec la colonne `mots_cles` remplie.
-6. **Open chat** : la réponse de l'outil montre, pour chaque passage, son rang sémantique et son rang mots-clés.
-
-⚠️ **Après chaque modification du workflow : enregistrer ET republier.** L'ingestion utilise la version en cours d'édition, mais l'outil du chat garde l'ancienne version publiée tant qu'on n'a pas republié.
-
-### Si ça coince
-| Erreur | Solution |
-|---|---|
-| Le chat répond « je ne trouve pas » et l'outil affiche `Workflow is not active and cannot be executed` | **Publier** le workflow (étape 4) |
-| Le chat utilise une ancienne version après une modification | **Republier** le workflow |
-| `404` sur l'embedding | Le nom du modèle (`models/gemini-embedding-2`) diffère de celui de ton compte : le changer dans « Préparer les embeddings » **et** dans l'URL + le body de « Embedding de la question », puis réindexer |
-| `expected 3072 dimensions, not N` | Dans `setup_hybride.sql`, remplacer 3072 par N (table + fonction), `drop table epictete_chunks;`, relancer le script |
-| `function epictete_recherche_hybride does not exist` | Étape 1 |
-
-### Vérifié hors n8n (`tests/test_hybride.mjs`)
-- **Structure** : ordre des nodes, Limit à 100, un seul déclencheur, aiguillage indexer / rechercher, même modèle d'embeddings des deux côtés, aucune clé dans le JSON.
-- **Nodes Code sur le vrai PDF** : 56 chunks, 8 mots-clés sans mots vides, 1 seul appel Gemini, erreur claire si Gemini renvoie moins de vecteurs.
-- **SQL exécuté sur Postgres 18 + pgvector** : réindexation atomique (une erreur laisse les 56 anciennes lignes) ; mot exact rare retrouvé ; question sans mot du livre servie par le sens ; fusion RRF ; mots combinés en OU ; « Socrate » trouve « Socrates » ; « Chapter N » / « chapitre N » met le chapitre en tête (12 cas).
-- **Revue hostile dans un vrai n8n 2.41.3** (sous-agent : Postgres + pgvector, faux Gemini) : l'auto-appel, l'aiguillage, le HTTP avec le credential Gemini, les paramètres SQL de 1,7 Mo et le retour vers l'agent fonctionnent. Ses 3 problèmes sont corrigés ou documentés ci-dessus (publication obligatoire, recherche par chapitre, Limit à 3).
-- **Mutations** : 8 erreurs introduites exprès, toutes détectées.
-
-## Version answering (Context → Routing → Search → Reranking → Generation)
-
-Fichier : [`workflow_chatbot_epictete_answering.json`](workflow_chatbot_epictete_answering.json) · SQL : [`supabase/setup_answering.sql`](supabase/setup_answering.sql), en plus de `setup_hybride.sql`.
-
-✅ **Validé dans n8n** avec les nodes Google Gemini natifs : les 6 étapes s'exécutent, 10 candidats → reranking → génération → sauvegarde.
-
-L'ingestion est **la même que la version hybride**, avec la même table `epictete_chunks`. Seul le chat change : plus d'agent qui décide tout seul, chaque étape de la réponse est un **node visible**.
-
-```
-1. Input (chat)
- → 2. Context   : historique (SQL) → construire
- → 3. Routing   : Gemini → lire la décision → chercher dans le livre ?
-       ├─ oui → 4. Search    : embedding de la requête (Gemini) → recherche hybride (SQL, 10 candidats)
-       │        5. Reranking : préparer → Gemini (note 0-10) → garder les meilleurs (≤ 4)
-       │        6. Generation: Gemini → réponse
-       └─ non → Réponse directe (sans recherche)
- → 7. Sauvegarder l'échange (SQL) → renvoie { output } au chat
-```
-
-| Étape | Rôle | Détail |
-|---|---|---|
-| **1. Input** | La question | Chat Trigger (`chatInput`, `sessionId`) |
-| **2. Context** | Se souvenir de la conversation | Les **3 derniers échanges** de la session, avec les **chapitres utilisés**, lus dans la table `epictete_conversations` |
-| **3. Routing** | Décider quoi faire | Gemini classe la question : **livre** / **conversation** (bonjour, merci) / **hors sujet**. Il la réécrit en **requête anglaise autonome** (« et le suivant ? » après le chapitre 8 → `Enchiridion – Chapter 9`) et détecte la langue. Si sa réponse est illisible, on cherche quand même dans le livre |
-| **4. Search** | Trouver des candidats | La recherche **hybride** (sens + mots-clés) renvoie **10 candidats** |
-| **5. Reranking** | Garder les bons | Gemini note chaque candidat de 0 à 10 par rapport à la question. On garde **au plus 4 passages notés ≥ 5**. Le chapitre explicitement demandé est toujours gardé. Si la notation est illisible, on garde les 4 premiers de la recherche |
-| **6. Generation** | Répondre | Gemini répond **uniquement** à partir des passages gardés, dans la langue de la question, en citant les chapitres. Sans passage pertinent : « je ne trouve pas » |
-| **7. Sauvegarde** | Contexte de la prochaine question | Question, réponse, route, requête et chapitres utilisés sont enregistrés ; le chat affiche la réponse |
-
-Conversation et hors sujet passent par une **réponse directe**, sans recherche : c'est plus rapide et ça ne consomme pas d'appel en plus.
-
-Appels Gemini par question : **4** pour une question sur le livre (routing, embedding, reranking, generation), **1** pour une conversation ou une question hors sujet.
-
-**Nodes utilisés pour Gemini :**
-- **Routing, Reranking et Generation** → node **Google Gemini natif** (*Message a model*), modèle `models/gemini-flash-lite-latest`. Routing et Reranking ont l'option *Output Content as JSON* activée. *Simplify Output* est désactivé : le node renvoie alors la réponse brute `{ candidates: [...] }`, que lisent les nodes Code.
-- **Embeddings** (`models/gemini-embedding-2`) → **HTTP Request**. n8n n'a pas de node Gemini qui renvoie un vecteur : le node natif ne fait pas d'embeddings, et le sous-node *Embeddings Google Gemini* ne se branche que sur un vector store. Or ici, il faut le vecteur brut pour la requête SQL hybride.
-
-### Mise en place
-1. **Supabase → SQL Editor** : exécuter [`supabase/setup_answering.sql`](supabase/setup_answering.sql), qui crée la table `epictete_conversations`. `setup_hybride.sql` doit déjà avoir été exécuté (c'est le cas si la version hybride marche).
-2. **n8n → Import from File** → `workflow_chatbot_epictete_answering.json`.
-3. Credentials :
-   - **Gemini** dans les 3 nodes **Google Gemini** (*3. Routing*, *5. Reranking*, *6. Generation*) et les 2 HTTP Request d'embedding (*Embedding des chunks*, *4. Search : embedding*). C'est le même credential partout ;
-   - **Postgres** dans les 4 nodes SQL : *Enregistrer dans Supabase*, *2. Context : historique*, *4. Search : recherche hybride*, *7. Sauvegarder l'échange*.
-4. **Ctrl+S**. Pas besoin de publier pour le chat : il n'y a plus d'outil d'agent.
-5. **Si la table `epictete_chunks` est déjà remplie** (version hybride), rien à réindexer : on peut ouvrir le chat directement. Sinon : bouton orange **« Execute workflow »** du Formulaire → PDF.
-6. **Open chat**, puis :
-   - « Qu'est-ce qui dépend de nous ? » ;
-   - « Et le chapitre suivant ? », pour tester le Context et le Routing ;
-   - « Merci ! », qui donne une réponse directe ;
-   - « Quelle est la capitale du Japon ? », hors sujet.
-
-   Dans *Executions*, chaque étape montre ce qu'elle a décidé : la route, la requête réécrite, les 10 candidats, les notes du reranking, les passages gardés.
-
-### Pourquoi autant de nodes ?
-Chaque node correspond à une étape demandée, et les petits nodes Code rendent chaque décision visible dans *Executions* : route choisie, requête réécrite, notes du reranking, passages gardés. On pourrait en fusionner 2 ou 3 dans des expressions, mais on perdrait cette lisibilité.
-
-Le seul réglage d'allègement utile : passer la recherche de 10 à 6 candidats (node « 4. Search : recherche hybride (SQL) »), ce qui raccourcit le prompt de reranking.
-
-### Si ça coince
-| Situation | Ce qui se passe / que faire |
-|---|---|
-| Quota Gemini dépassé (429) ou Gemini surchargé (503) | Chaque appel Gemini du chat (3 nodes Gemini + l'embedding) **réessaie 3 fois, à 5 s d'intervalle**. Si ça échoue encore, le chat affiche l'erreur et l'échange n'est pas enregistré : attendre une minute et reposer la question |
-| Gemini renvoie une notation de reranking mal formée | Les notes illisibles sont ignorées ; s'il n'en reste aucune, on garde les 4 premiers de la recherche hybride |
-| Question dans une autre langue (espagnol…) | Le routing détecte la langue (code à 2 lettres) et la génération répond dans cette langue |
-| Table `epictete_chunks` vide | La recherche renvoie 0 candidat et le bot répond qu'il ne trouve pas. Le reranking est quand même appelé (1 appel inutile) : réindexer le livre |
-| L'historique grossit | `epictete_conversations` garde tout. Pour purger : `delete from epictete_conversations where created_at < now() - interval '30 days';` |
-
-### Vérifié hors n8n (`tests/test_answering.mjs`)
-- **Structure** : ordre des 6 étapes, branche directe sans recherche, dernier node qui renvoie `{ output }`. Les 3 appels LLM passent par le node Google Gemini natif (JSON pour routing et reranking) ; les seuls HTTP restants sont les embeddings. Même modèle d'embeddings que l'ingestion, ingestion identique à la version hybride.
-- **Routing** : JSON valide, JSON entouré de ```` ```json ````, réponse illisible (repli sur « livre »), route inconnue, chapitre impossible.
-- **Reranking** : seuil ≥ 5, maximum 4, tri par note, chapitre demandé protégé, notation illisible, aucun passage pertinent.
-- **Conversations complètes** (vrai SQL + vrais nodes Code + Gemini simulé) :
-  - nouvelle session sans historique ;
-  - « Et le chapitre suivant ? » qui reçoit l'échange précédent ;
-  - « Merci » et hors sujet, sans recherche ;
-  - échanges enregistrés, 3 derniers dans l'ordre ;
-  - virgules et apostrophes intactes.
-- **Mutations** : 8 erreurs introduites exprès, toutes détectées. 2 trous dans les tests ont été trouvés puis corrigés.
-- **Revue hostile dans un vrai n8n 2.41.3** (sous-agent : Postgres + pgvector, faux Gemini programmable) : **aucun bloquant**. Ce qui marche réellement :
-  - le chat reçoit `output` dans les 2 branches ;
-  - textes piégés enregistrés intacts ;
-  - réponses Gemini bloquées ou vides gérées ;
-  - sessions séparées ;
-  - RLS ;
-  - pas besoin de publier.
-
-  7 améliorations appliquées et testées :
-  - notation de reranking mal formée qui effaçait tous les passages ;
-  - 3 essais sur les erreurs Gemini ;
-  - chapitres utilisés dans l'historique ;
-  - autres langues ;
-  - réponse par défaut neutre ;
-  - purge et coût documentés.
+Les tests vérifient :
+- la structure des workflows ;
+- les nodes Code, exécutés hors n8n sur le vrai PDF ;
+- le SQL, exécuté sur Postgres 18 + pgvector (PGlite) ;
+- des conversations complètes, avec un Gemini simulé.
 
 ## Source
 

@@ -19,7 +19,7 @@ Ne jamais demander à l'utilisateur ce qu'on peut trouver soi-même.
 
 ## Étape 2 — Interviewer (par petits lots, 3-4 questions max)
 
-Commencer par dire ce qu'on a compris et ce qui existe, puis poser des questions **fermées ou à choix**, avec une recommandation. Couvrir :
+Commencer par dire ce qu'on a compris et ce qui existe, puis poser des questions **fermées ou à choix**, avec une recommandation en premier (si l'outil `AskUserQuestion` est disponible, l'utiliser). Couvrir :
 
 1. **Objectif** : quel problème ? Pour qui ? Comment sait-on que c'est réussi ?
 2. **Entrées** : quelles données, d'où, réelles ou fictives, quel volume ?
@@ -33,7 +33,7 @@ Proposer des alternatives quand une demande semble coûteuse ou risquée.
 
 ## Étape 3 — Écrire la spec
 
-Créer `specs/<AAAA-MM-JJ>-<sujet>.md` :
+Créer `specs/<AAAA-MM-JJ>-<sujet>.md`. Pour une **évolution** d'un projet qui a déjà une spec, ajouter une section « Évolution : <sujet> (<date>) » à cette spec plutôt qu'un nouveau fichier, avec ses propres affirmations (ex. R1, R2…) :
 
 ```markdown
 # <Titre>
@@ -63,3 +63,7 @@ Mauvais : « Les erreurs sont bien gérées. »
 
 Relire la spec avec l'utilisateur et la lui faire confirmer. Tant que la section « Questions ouvertes » n'est pas vide, on ne code pas.
 Ensuite, enchaîner avec le skill `doubt-driven-dev`.
+
+## Après le développement
+
+La spec reste vivante : y noter les **écarts découverts** pendant le développement (ce qui a dû changer et pourquoi), le résultat de la revue hostile, et la **validation** par l'utilisateur dans l'environnement réel.

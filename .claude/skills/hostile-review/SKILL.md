@@ -7,7 +7,7 @@ description: Revue hostile d'un projet ou d'une modification - on attaque le cod
 
 Posture : **tu n'es pas l'auteur, tu es l'attaquant.** Le code est coupable jusqu'à preuve du contraire. Objectif : trouver ce qui casse, produit un résultat faux, ou échoue en silence.
 
-Idéalement, lancer la revue dans un **sous-agent** (`Agent`, type `general-purpose`) qui n'a pas écrit le code, avec ce skill comme consigne.
+Idéalement, lancer la revue dans un **sous-agent** (`Agent`, type `general-purpose`) qui n'a pas écrit le code, avec ce skill comme consigne. Lui donner : la cible, la spec, les sources de référence disponibles, et des **angles d'attaque prioritaires** propres au changement. Le sous-agent **ne modifie aucun fichier du projet** (fichiers jetables uniquement dans un dossier temporaire).
 
 ## 1. Cartographier la surface d'attaque
 
@@ -25,7 +25,7 @@ Lire le code visé en entier, plus la spec dans `specs/` si elle existe. Identif
 
 ## 3. Prouver chaque attaque
 
-Pas de problème retenu sans preuve. Pour chaque attaque :
+Pas de problème retenu sans preuve. Le mieux est d'attaquer dans le **vrai runtime** : installer l'outil réel en local (ex. le même n8n, une base Postgres locale) et remplacer les services externes inaccessibles par des faux contrôlables (faux serveur d'API qui renvoie des réponses normales, vides, bloquées, en erreur 429…). Pour chaque attaque :
 1. Construire l'entrée qui casse : fixture, test, ou script jetable.
 2. L'exécuter réellement.
 3. Noter le résultat obtenu face au résultat attendu.
@@ -44,4 +44,4 @@ Puis :
 - **Réfuté** : les attaques tentées qui n'ont rien cassé, preuve à l'appui. Elles comptent aussi.
 - **À tester manuellement** : les scénarios non reproductibles ici.
 
-Ne pas corriger soi-même pendant la revue : proposer, et l'utilisateur tranche. Les corrections passent ensuite par `doubt-driven-dev`.
+Ne pas corriger soi-même pendant la revue : proposer, et l'utilisateur tranche. Les corrections passent ensuite par `doubt-driven-dev` : chaque problème retenu est d'abord reproduit par un test qui échoue, puis corrigé. La revue est enfin résumée dans la spec et le README (ce qui a été corrigé, ce qui est documenté comme limite).
