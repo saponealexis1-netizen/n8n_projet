@@ -11,11 +11,14 @@ Projets d'automatisation **n8n**, construits avec Claude Code et 3 skills maison
 
 Chaque projet a son propre README : installation dans n8n, fonctionnement, limites connues.
 
+📘 **[Fiche récap](FICHE_RECAP.md)** : le flow node par node, l'ingestion et l'answering expliqués avec des exemples, le CLI n8n et le MCP.
+
 ## Structure du repo
 
 ```
 n8n_projet/
 ├── README.md                      ← ce fichier
+├── FICHE_RECAP.md                 ← fiche de révision (flow, ingestion, answering, CLI, MCP)
 ├── .claude/skills/                ← les 3 skills Claude Code (génériques)
 │   ├── interview-spec/
 │   ├── doubt-driven-dev/
