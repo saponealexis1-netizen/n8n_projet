@@ -68,16 +68,3 @@ Les skills sont **génériques** : on peut les réutiliser sur n'importe quel pr
 | **[`/hostile-review`](.claude/skills/hostile-review/SKILL.md)** | Attaque le projet pour le casser, via un sous-agent qui n'a pas écrit le code ; ne garde que ce qui est prouvé | Un rapport trié par gravité : scénario, preuve, correctif proposé |
 
 **Appliqués au chatbot** : 4 versions, chacune spécifiée (30 affirmations au total), développée dans le doute puis attaquée par une revue hostile, dont 2 exécutées dans un vrai n8n. Le détail est dans la section [« Comment le projet a été construit »](projets/02_chatbot_epictete/README.md#7-comment-le-projet-a-été-construit).
-
-## Tests
-
-```bash
-npm install
-npm test                  # 4 suites de tests du chatbot (structure, nodes Code, SQL réel, conversations)
-npm run build:chatbot     # régénère les workflows du chatbot à partir de src/
-```
-
-Exécuter un node Code d'un workflow hors de n8n :
-```bash
-node tools/run-code-node.mjs <workflow.json> "<Nom du node>" <input.json> [--ref "Node=fichier.json"] [--now 2026-09-28T09:30]
-```
