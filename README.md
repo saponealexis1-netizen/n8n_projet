@@ -1,6 +1,6 @@
 # n8n_projet
 
-Projets d'automatisation **n8n**, construits avec Claude Code et 3 **skills** maison qui imposent une méthode de travail : **spec → développement dans le doute → revue hostile**.
+Projets d'automatisation **n8n**, construits avec 3 **skills** maison qui imposent une méthode de travail : **spec → développement dans le doute → revue hostile**.
 
 ## 📖 Projet principal : chatbot RAG sur le Manuel d'Épictète
 
